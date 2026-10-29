@@ -153,6 +153,33 @@ def normalize_summary_issue_count(summary: dict, issue_ids: list[str]) -> dict:
     return normalized
 
 
+def repair_summary_coverage(summary: dict, issue_ids: list[str]) -> dict:
+    """把模型分组结果修正到"每条问题恰好出现一次"。
+
+    模型偶尔漏掉或重复问题编号。完整性由程序担保，不靠模型自觉：
+    去重、丢弃不存在的编号、把漏掉的问题收进「其他问题」分组。
+    """
+    groups = summary.get("groups")
+    if not isinstance(groups, list):
+        return summary
+    known = set(issue_ids)
+    seen: set[str] = set()
+    repaired: list[dict] = []
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        ids = []
+        for item in group.get("issue_ids") or []:
+            if isinstance(item, str) and item in known and item not in seen:
+                seen.add(item)
+                ids.append(item)
+        repaired.append({**group, "issue_ids": ids})
+    missing = [item for item in issue_ids if item not in seen]
+    if missing:
+        repaired.append({"title": "其他问题", "issue_ids": missing})
+    return {**summary, "groups": repaired}
+
+
 def validate_summary(summary: dict, issue_ids: list[str]) -> None:
     if not isinstance(summary.get("summary"), str) or not summary["summary"].strip():
         raise ValueError("SUMMARY_TEXT_REQUIRED")

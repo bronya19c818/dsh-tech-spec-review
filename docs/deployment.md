@@ -44,6 +44,18 @@ node tests/ui-routes-smoke.mjs   # Host 侧状态聚合与设置读写
 node tests/plugin-apply.smoke.mjs  # 插件 Host 半边拉起/回收（需要真实解释器）
 ```
 
+端到端：
+
+```bat
+run-e2e.bat
+```
+
+生成一份小样本 DOCX（含样式不一致与编号跳号），跑完整审查，校验全部子任务完成、
+过程文件齐全、报告已生成、问题分组非空、编号跳号被检出。每次在 `artifacts/`
+留一份 JSON 报告。需要规则服务在跑且对话模型可用，否则以退出码 2 跳过。
+
+小样本一次约 1.5 分钟；用真实规范书（84 句）约 9 分钟，不适合做回归。
+
 ## 发布
 
 ```powershell

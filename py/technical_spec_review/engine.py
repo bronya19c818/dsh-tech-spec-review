@@ -11,6 +11,7 @@ from .artifacts import (
     normalize_summary_issue_count,
     read_json,
     render_report,
+    repair_summary_coverage,
     reportable_findings,
     summary_process_files,
     write_json,
@@ -387,6 +388,7 @@ class ReviewService:
                 },
             )
             summary = normalize_summary_issue_count(summary, issue_ids)
+            summary = repair_summary_coverage(summary, issue_ids)
             await asyncio.to_thread(render_report, directory, results, summary, document)
             await write_json(directory / "summary.json", summary)
             await self._update(rid, "SUMMARY", status="COMPLETED", progress=[1, 1])
