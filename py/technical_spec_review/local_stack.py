@@ -74,6 +74,11 @@ def report() -> None:
     print(f"[local] chat model : {cfg.model_name or 'MISSING'} @ {cfg.model_url or 'MISSING'}", flush=True)
     print(f"[local] rule server: {cfg.registry_url or 'MISSING'}", flush=True)
     print(
+        f"[local] gate       : {cfg.gate_url or '未配置（B02 全量送对话模型）'} "
+        f"threshold={cfg.gate_threshold}",
+        flush=True,
+    )
+    print(
         f"[local] rerank     : {cfg.rerank_model or '未配置'} @ {cfg.rerank_url or '-'} "
         f"top_k={cfg.rerank_top_k} threshold={cfg.rerank_threshold}",
         flush=True,
