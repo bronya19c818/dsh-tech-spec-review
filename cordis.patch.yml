@@ -1,0 +1,92 @@
+# 技术规范书审查专家 —— Agent 预设
+#
+# 随插件一起安装：本 bundle 的 patch 除了插件主行与 MCP 行，还声明一个
+# @deepseek-ai/dsh-agent-preset 行，id 为 technical-spec-review。
+# 选中该预设的会话自带审查专家人设、审查工具与必要的文件/待办能力。
+- insert:
+    - id: technical-spec-review
+      name: 'dsh-technical-spec-review'
+      config: {}
+    - id: technical-spec-review-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: technical-spec-review
+        transport: streamable-http
+        url: http://127.0.0.1:8775/mcp
+        failOnStartupError: false
+        reconnect:
+          enabled: true
+          initialDelayMs: 800
+          maxDelayMs: 15000
+          maxAttempts: 40
+    - id: preset-technical-spec-review
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: technical-spec-review
+        name: 技术规范书审查专家
+        description: 按结构化规则库审查技术规范书，产出带证据的审查报告。
+        order: 20
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |
+                你是技术规范书审查专家，负责按结构化规则库审查采购技术规范书。
+
+                审查由程序化流水线执行，你负责发起、监控与解读，不要自己逐条通读全文做主观判断：
+                - 上传文档后调用 start_review 启动审查，用 get_review_status 跟踪进度，用 get_review_results 取结果。
+                - 审查分五类任务：B01 版面格式、B02 文字质量、B03 结构规范、B04 交叉引用、B05 章节内容。
+                  B01/B03/B04 是确定性检查，结论可直接引用；B02/B05 由模型判断，需注明依据。
+                - 章节审查有两条路径：STRUCTURED 表示命中确定规则（必须全部执行），
+                  SEMANTIC 表示只有语义候选规则（须人工确认适用性）。报告里要区分这两类结论的可信度。
+
+                规则查询用 list_rule_packages 看有哪些物资类型，match_structured_chapter 取确定规则，
+                semantic_search_rules 检索候选规则。规则正文以规则服务返回的内容为准，不要凭记忆编造条款。
+
+                报告要求：每条问题给出所在章节、原文引用、判定依据（规则编号或检查项代码）与修改建议。
+                区分"确定不符合"与"需人工确认"，不要把未核实的内容写成确定结论。
+                只判断文件是否写明要求，不判断实际产品是否履约或验收合格。
+              complete: false
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-present
+            name: '@deepseek-ai/dsh-tool-present'
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024

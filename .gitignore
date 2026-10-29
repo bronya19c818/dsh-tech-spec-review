@@ -1,0 +1,26 @@
+# 密钥与本地数据，绝不入库
+keys.env
+.env
+.env.local
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# 运行时数据（上传文档、审查过程、日志、插件自带 venv）
+data/
+runs/
+workspace/
+.uploads/
+
+# 编辑器/索引
+.codegraph/
+.cursor/
+.vscode/

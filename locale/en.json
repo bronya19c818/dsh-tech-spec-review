@@ -1,0 +1,6 @@
+{
+  "bundle": {
+    "name": "Technical Spec Review",
+    "description": "Local PostgreSQL/pgvector rule base plus a structured review engine, exposed as MCP tools"
+  }
+}

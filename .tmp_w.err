@@ -1,0 +1,31 @@
+HTTP Request: GET http://127.0.0.1:8010/health "HTTP/1.1 200 OK"
+HTTP Request: GET http://127.0.0.1:8790/ui/overview "HTTP/1.1 200 OK"
+INFO:     Started server process [81252]
+INFO:     Waiting for application startup.
+StreamableHTTP session manager started
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8775 (Press CTRL+C to quit)
+Created new transport with session ID: 0d9a87a6c5da465a8ac7eff7660bf4bd
+Terminating session: 0d9a87a6c5da465a8ac7eff7660bf4bd
+Created new transport with session ID: e1613de158c0429386b298d7ff8a74cb
+Terminating session: e1613de158c0429386b298d7ff8a74cb
+Created new transport with session ID: 6a97c5441e664352886743156c108ca9
+Processing request of type ListToolsRequest
+Created new transport with session ID: af42949c905c4ec2b7b111fa535319a6
+Terminating session: af42949c905c4ec2b7b111fa535319a6
+Created new transport with session ID: af78d353aed44302be71c1123ca1b21e
+Terminating session: af78d353aed44302be71c1123ca1b21e
+Created new transport with session ID: 64e1d0c8f9db41d5a252230a9de182d6
+Terminating session: 64e1d0c8f9db41d5a252230a9de182d6
+Created new transport with session ID: c30a3c08ce9f487ba1a379d36579950e
+Terminating session: c30a3c08ce9f487ba1a379d36579950e
+Created new transport with session ID: 4f28c1b12fed4c23be570f472561b4fc
+Terminating session: 4f28c1b12fed4c23be570f472561b4fc
+Created new transport with session ID: b7fdd46906174044869cdfa466b1ea83
+Terminating session: b7fdd46906174044869cdfa466b1ea83
+Created new transport with session ID: 1edbc3be4a2e4e54a8add03c83bfb2e0
+Terminating session: 1edbc3be4a2e4e54a8add03c83bfb2e0
+Created new transport with session ID: 17c2660de60046bdaff41c5bf47042bf
+Terminating session: 17c2660de60046bdaff41c5bf47042bf
+Created new transport with session ID: 23227e3f457841c7be3398d35659baa3
+Terminating session: 23227e3f457841c7be3398d35659baa3

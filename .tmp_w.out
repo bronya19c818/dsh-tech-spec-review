@@ -1,0 +1,37 @@
+[local_stack] loaded D:\2subject\workspace\SYNC-DSH\dsh-tech-spec-review\keys.env
+[local_stack] initdb (first run)
+[local_stack] postgres at postgresql://postgres:@127.0.0.1:54997/postgres
+[local_stack] applied init.sql
+[local_stack] applied 002_add_object_scope_aliases.sql
+[local_stack] applied 003_seed_water_purifier.sql
+[local_stack] applied 004_seed_water_purifier_structure_rule.sql
+[local_stack] applied 005_cleanup_publish_test.sql
+[local_stack] applied 006_add_basic_rules.sql
+[local_stack] applied 007_add_rule_embeddings.sql
+[local_stack] chat model : mimo-v2.6-flash @ https://token-plan-cn.xiaomimimo.com/v1
+[local_stack] embedding    : @cf/qwen/qwen3-embedding-0.6b @ https://api.cloudflare.com/client/v4/accounts/052f68237fafdb70d5696c47ed5ef410/ai/v1 dim=1024
+[local_stack] semantic     : pgvector（本地）
+[local_stack] rerank       : @cf/baai/bge-reranker-base @ https://api.cloudflare.com/client/v4/accounts/052f68237fafdb70d5696c47ed5ef410/ai/run/@cf/baai/bge-reranker-base recall=24 top_k=8 threshold=0.0
+[local_stack] rule-registry on http://127.0.0.1:8010
+[local_stack] ui api on http://127.0.0.1:8790
+INFO:     127.0.0.1:56939 - "GET /mcp HTTP/1.1" 406 Not Acceptable
+INFO:     127.0.0.1:55351 - "POST /mcp HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:55352 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55351 - "POST /mcp HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:55352 - "GET /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55354 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54920 - "GET /mcp HTTP/1.1" 406 Not Acceptable
+INFO:     127.0.0.1:52076 - "GET /ui/overview HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52078 - "GET /mcp HTTP/1.1" 406 Not Acceptable
+INFO:     127.0.0.1:50593 - "GET /mcp HTTP/1.1" 406 Not Acceptable
+INFO:     127.0.0.1:50101 - "GET /mcp HTTP/1.1" 406 Not Acceptable
+INFO:     127.0.0.1:55652 - "GET /mcp HTTP/1.1" 406 Not Acceptable
+INFO:     127.0.0.1:56978 - "GET /mcp HTTP/1.1" 406 Not Acceptable
+INFO:     127.0.0.1:49680 - "GET /ui/overview HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49681 - "GET /ui/review?id=cfca399772864fe3ad2591ccf6763a8a HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49683 - "GET /ui/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49684 - "POST /ui/settings HTTP/1.1" 422 Unprocessable Entity
+INFO:     127.0.0.1:60167 - "POST /ui/settings HTTP/1.1" 422 Unprocessable Entity
+INFO:     127.0.0.1:63706 - "GET /mcp HTTP/1.1" 406 Not Acceptable
+INFO:     127.0.0.1:57493 - "GET /mcp HTTP/1.1" 406 Not Acceptable
+INFO:     127.0.0.1:61709 - "GET /mcp HTTP/1.1" 406 Not Acceptable

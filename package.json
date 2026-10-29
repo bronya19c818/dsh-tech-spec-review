@@ -1,0 +1,68 @@
+{
+  "name": "dsh-technical-spec-review",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "技术规范书审查：本地嵌入式 PostgreSQL/pgvector 规则库 + 程序化审查引擎，按需拉起并动态挂载为 MCP 工具",
+  "keywords": [
+    "dsh",
+    "dsh-bundle",
+    "technical-spec",
+    "review",
+    "pgvector",
+    "mcp"
+  ],
+  "license": "MIT",
+  "author": "bronya19c818",
+  "homepage": "https://github.com/bronya19c818/dsh-tech-spec-review#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bronya19c818/dsh-tech-spec-review.git"
+  },
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./src/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src/index.js",
+    "src/client.js",
+    "cordis.patch.yml",
+    "py/technical_spec_review/*.py",
+    "py/technical_spec_review/legacy_compilers/*.py",
+    "registry/sql/*.sql",
+    "registry/service/app/main.py",
+    "registry/service/app/catalog.py",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "requirements.txt",
+    ".env.example",
+    "src/ui-routes.js",
+    "py/technical_spec_review/pyenv.py"
+  ],
+  "engines": {
+    "dsh": ">=0.2.0 <0.3.0"
+  },
+  "scripts": {
+    "smoke": "node tests/plugin-apply.smoke.mjs",
+    "stack": "python -m technical_spec_review.local_stack"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": false,
+      "inject": []
+    }
+  },
+  "bugs": {
+    "url": "https://github.com/bronya19c818/dsh-tech-spec-review/issues"
+  }
+}
