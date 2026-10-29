@@ -8,7 +8,7 @@
  * 状态页刻意不占侧边栏：没有任务时它只是一个空壳，常驻入口反而干扰导航。
  *
  * 只消费宿主主题变量（--dsw-alias-*），不自带色板与字体；数据来自插件自己拉起的
- * 本地 UI 接口（127.0.0.1:8790，带 CORS），密钥写入走 ctx.remote.credentials。
+ * 密钥写入走 ctx.get('remote.credentials')，值存进 DSH 凭据库。
  */
 window.__ModuleLoader__.load({
   id: 'dsh-technical-spec-review',
@@ -484,11 +484,12 @@ window.__ModuleLoader__.load({
             if (value === undefined || value === '') continue
             payload[field.key] = field.type === 'number' ? Number(value) : String(value)
           }
+          // 先落配置再写密钥：密钥服务出问题不该把已经填好的地址和模型名一起丢掉。
+          await postJson('/settings', { values: payload })
           for (const id of ['chat', 'rerank', 'rules']) {
             const draft = drafts[id]
             if (draft) await setSecret(refs[id], draft)
           }
-          await postJson('/settings', { values: payload })
           setDrafts({ chat: '', rerank: '', rules: '' })
           setMessage('已保存。重启后端后生效。')
           setLevel('success')
@@ -614,7 +615,7 @@ window.__ModuleLoader__.load({
                     h('div', { className: 'tsr-hint', style: { marginTop: 0 } },
                       info.reachable
                         ? `${info.embedding_model || '未配置'}${info.embedding_dimensions ? `（${info.embedding_dimensions} 维）` : ''}`
-                        : '服务未连接，无法读取'),
+                        : `服务未连接${info.reason ? `（${info.reason}）` : ''}，无法读取`),
                   ),
                   h('div', { className: 'tsr-field' },
                     h('label', null, '索引规模'),
@@ -657,11 +658,13 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['slots', 'remote'],
+      inject: ['slots', 'remote.credentials'],
       apply(ctx) {
+        // 凭据服务用 ctx.get 取：它是 "remote.credentials" 这个服务名，
+        // 属性代理（ctx.remote.credentials）在未注入时会直接抛错。
         const credentialStore = () => {
-          const credentials = ctx.remote?.credentials
-          if (credentials === undefined) throw new Error('DSH 凭据服务不可用')
+          const credentials = ctx.get('remote.credentials')
+          if (!credentials) throw new Error('DSH 凭据服务不可用')
           return credentials
         }
         const setSecret = (ref, value) => credentialStore().set(ref, value)

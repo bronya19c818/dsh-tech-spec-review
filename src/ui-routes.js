@@ -6,6 +6,7 @@
  * 这里只报告"是否已配置"。
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { request as httpRequest } from 'node:http'
 import { join } from 'node:path'
 
 export const UI_PREFIX = '/api/technical-spec-review/'
@@ -193,6 +194,50 @@ function reviewDetail(state, id) {
   }
 }
 
+/**
+ * 直连本地 HTTP 取 JSON。
+ *
+ * 不用全局 fetch：应用里配了系统代理，fetch 会把 127.0.0.1 的请求也交给代理，
+ * 结果就是规则服务明明在跑却探测失败。node:http 不走代理。
+ */
+function getJsonFrom(url, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(url)
+    if (target.protocol !== 'http:') {
+      reject(new Error(`unsupported-protocol-${target.protocol}`))
+      return
+    }
+    const req = httpRequest(
+      {
+        hostname: target.hostname,
+        port: target.port || 80,
+        path: `${target.pathname}${target.search}`,
+        method: 'GET',
+        timeout: timeoutMs,
+        headers: { accept: 'application/json' },
+      },
+      (res) => {
+        const chunks = []
+        res.on('data', (chunk) => chunks.push(chunk))
+        res.on('end', () => {
+          if (res.statusCode !== 200) {
+            reject(new Error(`http-${res.statusCode}`))
+            return
+          }
+          try {
+            resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+          } catch {
+            reject(new Error('invalid-json'))
+          }
+        })
+      },
+    )
+    req.on('timeout', () => req.destroy(new Error('timeout')))
+    req.on('error', (error) => reject(error))
+    req.end()
+  })
+}
+
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -241,12 +286,7 @@ export async function handleUiRequest(request, state, deps) {
       const base = (stored.rulesBaseUrl || process.env.TSR_REGISTRY_URL || '').replace(/\/+$/, '')
       if (!base) return json({ reachable: false, reason: 'not-configured' })
       try {
-        const controller = new AbortController()
-        const timer = setTimeout(() => controller.abort(), 5000)
-        const response = await fetch(base + '/v1/service-info', { signal: controller.signal })
-        clearTimeout(timer)
-        if (!response.ok) return json({ reachable: false, reason: `http-${response.status}` })
-        return json({ reachable: true, ...(await response.json()) })
+        return json({ reachable: true, ...(await getJsonFrom(base + '/v1/service-info')) })
       } catch (error) {
         return json({ reachable: false, reason: String((error && error.message) || error) })
       }

@@ -56,7 +56,11 @@ const ctx = {
 new Function(readFileSync(SOURCE, 'utf8'))()
 
 assert.ok(factoryResult, '源码应调用 __ModuleLoader__.load')
-assert.deepEqual(factoryResult.inject, ['slots', 'remote'], 'inject 应声明 slots 与 remote')
+assert.deepEqual(
+  factoryResult.inject,
+  ['slots', 'remote.credentials'],
+  'inject 应声明 slots 与 remote.credentials',
+)
 factoryResult.apply(ctx)
 
 const byName = (name) => registrations.filter((r) => r.name === name)
