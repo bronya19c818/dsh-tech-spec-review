@@ -573,6 +573,7 @@ window.__ModuleLoader__.load({
       }
 
       const info = serverInfo || {}
+      // 只报告"能不能连上"，不读取服务端内部配置：嵌入模型、索引规模都属于服务端自身。
       const serverState = info.reachable
         ? h('span', { className: 'tsr-badge', 'data-ok': 'true' }, '已连接')
         : h('span', { className: 'tsr-badge' }, '未连接')
@@ -607,23 +608,9 @@ window.__ModuleLoader__.load({
                 ),
                 h('div', { className: 'tsr-card-b' },
                   h('div', { className: 'tsr-hint', style: { marginTop: 0, marginBottom: 10 } },
-                    '规则库与语义索引都在服务端，嵌入模型由它统一决定；客户端只取规则、不做向量计算。'),
+                    '规则库与语义检索都在服务端，客户端只取规则、不做向量计算。'),
                   renderField({ key: 'rulesBaseUrl', label: '服务地址', placeholder: 'http://127.0.0.1:8010' }),
                   renderSecret({ id: 'rules', keyLabel: '服务令牌（可选）' }),
-                  h('div', { className: 'tsr-field' },
-                    h('label', null, '嵌入模型'),
-                    h('div', { className: 'tsr-hint', style: { marginTop: 0 } },
-                      info.reachable
-                        ? `${info.embedding_model || '未配置'}${info.embedding_dimensions ? `（${info.embedding_dimensions} 维）` : ''}`
-                        : `服务未连接${info.reason ? `（${info.reason}）` : ''}，无法读取`),
-                  ),
-                  h('div', { className: 'tsr-field' },
-                    h('label', null, '索引规模'),
-                    h('div', { className: 'tsr-hint', style: { marginTop: 0 } },
-                      info.reachable
-                        ? `${info.chunks ?? 0} 个分块 · ${info.active_rules ?? 0} 条生效规则`
-                        : '—'),
-                  ),
                 ),
               ),
 

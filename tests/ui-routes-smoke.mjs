@@ -65,9 +65,11 @@ const deps = {
   restart: async () => true,
 }
 
-const get = (path) => handleUiRequest(new Request(`http://x${UI_PREFIX}${path}`), state, deps)
+// 前缀不含尾斜杠（宿主按 prefix + '/' 匹配），所以这里显式补一个。
+const url = (path) => `http://x${UI_PREFIX}${path.startsWith('/') ? path : '/' + path}`
+const get = (path) => handleUiRequest(new Request(url(path)), state, deps)
 const post = (path, body) => handleUiRequest(
-  new Request(`http://x${UI_PREFIX}${path}`, {
+  new Request(url(path), {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
   }), state, deps,
 )
@@ -124,12 +126,12 @@ assert.equal((await post('settings', { values: { nope: 1 } })).status, 400)
 assert.equal((await post('settings', { values: { rerankThreshold: 5 } })).status, 400)
 assert.throws(() => validateSettings({ nope: 1 }), /unknown setting/)
 
-// 配了地址后的 server-info：可达就带上服务信息，不可达要给出原因（不抛错）
+// server-info 只回答可达性：嵌入模型与索引规模属于服务端，客户端不读取
 const probed = await (await get('server-info')).json()
 assert.equal(typeof probed.reachable, 'boolean')
-if (probed.reachable) {
-  assert.ok('embedding_dimensions' in probed, '可达时应读出嵌入维度')
-} else {
+assert.equal(probed.embedding_model, undefined, '客户端不应读取服务端嵌入模型')
+assert.equal(probed.chunks, undefined, '客户端不应读取服务端索引规模')
+if (!probed.reachable) {
   assert.ok(typeof probed.reason === 'string' && probed.reason.length > 0, '不可达要给原因')
 }
 

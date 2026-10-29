@@ -9,7 +9,9 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { request as httpRequest } from 'node:http'
 import { join } from 'node:path'
 
-export const UI_PREFIX = '/api/technical-spec-review/'
+// 前缀不带尾斜杠：宿主按 pathname === prefix 或 startsWith(prefix + '/') 匹配，
+// 带尾斜杠会拼成双斜杠，所有子路径都匹配不上（表现为整页 404）。
+export const UI_PREFIX = '/api/technical-spec-review'
 
 const REVIEW_ID_RE = /^[A-Za-z0-9_-]{1,64}$/
 const REVIEW_LIMIT = 30
@@ -254,7 +256,7 @@ function json(body, status = 200) {
  */
 export async function handleUiRequest(request, state, deps) {
   const url = new URL(request.url)
-  const path = url.pathname.slice(UI_PREFIX.length - 1)
+  const path = url.pathname.slice(UI_PREFIX.length)
   try {
     if (path === '/overview' && request.method === 'GET') return json(overview(state))
 
@@ -281,12 +283,14 @@ export async function handleUiRequest(request, state, deps) {
     }
 
     if (path === '/server-info' && request.method === 'GET') {
-      // 规则服务的只读信息：嵌入模型、维度与索引规模都由服务端决定。
+      // 只回答"规则服务能不能连上"。嵌入模型、索引规模是服务端自身的事，
+      // 客户端不读取也不展示。
       const stored = deps.loadSettings(state.dataDir)
       const base = (stored.rulesBaseUrl || process.env.TSR_REGISTRY_URL || '').replace(/\/+$/, '')
       if (!base) return json({ reachable: false, reason: 'not-configured' })
       try {
-        return json({ reachable: true, ...(await getJsonFrom(base + '/v1/service-info')) })
+        await getJsonFrom(base + '/health')
+        return json({ reachable: true })
       } catch (error) {
         return json({ reachable: false, reason: String((error && error.message) || error) })
       }
