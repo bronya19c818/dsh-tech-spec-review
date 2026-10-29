@@ -37,14 +37,18 @@ class ReviewService:
         *,
         concurrency: int = 4,
         b02_concurrency: int | None = None,
+        b02_batch: int = 8,
         upload_store: UploadStore | None = None,
     ):
         sentence_concurrency = concurrency if b02_concurrency is None else b02_concurrency
         if not 1 <= concurrency <= 32 or not 1 <= sentence_concurrency <= 32:
             raise ValueError("CONCURRENCY_OUT_OF_RANGE")
+        if not 1 <= b02_batch <= 32:
+            raise ValueError("BATCH_SIZE_OUT_OF_RANGE")
         self.runs, self.document_root = runs.resolve(), document_root.resolve()
         self.registry, self.model, self.concurrency = registry, model, concurrency
         self.b02_concurrency = sentence_concurrency
+        self.b02_batch = b02_batch
         self.upload_store = upload_store
         self.active: dict[str, asyncio.Task] = {}
         self.locks: dict[str, asyncio.Lock] = {}
@@ -455,6 +459,7 @@ class ReviewService:
                 self.model,
                 self.directory(rid),
                 workers=self.b02_concurrency,
+                batch_size=self.b02_batch,
                 progress=progress,
             )
         if task_id == "B03":
@@ -495,6 +500,11 @@ class ReviewService:
             "MODEL_TOOL_ROUNDS_EXHAUSTED",
             "MODEL_TRANSPORT_ERROR",
             "MODEL_RETRY_EXHAUSTED",
+            # 章节审查里模型没按约定给出合法候选处置（漏 applicability、枚举值不对）。
+            # 属输出依从性问题，重问一次通常就能过；规则缺失、身份不一致等确定性错误不在此列。
+            "CANDIDATE_APPLICABILITY_INVALID",
+            "MODEL_DECISIONS_INVALID",
+            "CHAPTER_RESPONSE_INVALID",
         }:
             return True
         if error.startswith("MODEL_HTTP_"):

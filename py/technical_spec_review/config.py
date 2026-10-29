@@ -58,6 +58,7 @@ class Config:
     rerank_threshold: float = 0.0
     concurrency: int = 4
     b02_concurrency: int = 8
+    b02_batch: int = 8
     rules_backend: str = "http"
     mcp_config: str = ""
     catalog_mcp_config: str = ""
@@ -103,6 +104,7 @@ class Config:
             rerank_threshold=float(env.get("TSR_RERANK_THRESHOLD", "0")),
             concurrency=int(os.getenv("TSR_CONCURRENCY", "4")),
             b02_concurrency=int(os.getenv("TSR_B02_CONCURRENCY", "8")),
+            b02_batch=int(os.getenv("TSR_B02_BATCH", "8")),
         )
 
 
@@ -196,6 +198,7 @@ async def _runtime(
             model,
             concurrency=config.concurrency,
             b02_concurrency=config.b02_concurrency,
+            b02_batch=config.b02_batch,
             upload_store=upload_store,
         )
         try:

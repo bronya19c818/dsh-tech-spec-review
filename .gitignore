@@ -26,3 +26,5 @@ workspace/
 .vscode/
 # 端到端产物（每次运行一份报告）
 artifacts/
+# 临时调试输出
+.tmp*

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -45,7 +47,7 @@ class OpenAIModel:
         *,
         concurrency: int = 4,
         max_rounds: int = 17,
-        retries: int = 2,
+        retries: int = 3,
     ):
         if concurrency < 1 or max_rounds < 1 or retries < 0:
             raise ValueError("INVALID_MODEL_LIMITS")
@@ -56,12 +58,20 @@ class OpenAIModel:
             model,
         )
         self.semaphore = asyncio.Semaphore(concurrency)
+        # 限流冷却：某个请求被 429 后，全体等这个时刻再发，避免并发重试又一起撞上限。
+        self._cooldown_until = 0.0
         self.max_rounds, self.retries = max_rounds, retries
 
     async def _request(self, body: dict) -> dict:
         if not self.base_url or not self.model:
             raise RuntimeError("MODEL_NOT_CONFIGURED")
         for attempt in range(self.retries + 1):
+            retry_after = 0.0
+            throttled = False
+            # 别的请求刚被限流过就一起等，别让它自己先撞上去。
+            wait = self._cooldown_until - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
             try:
                 async with self.semaphore:
                     response = await self.http.post(
@@ -77,7 +87,17 @@ class OpenAIModel:
                     return response.json()
                 if response.status_code not in {429, 500, 502, 503, 504} or attempt == self.retries:
                     raise RuntimeError(f"MODEL_HTTP_{response.status_code}")
-            await asyncio.sleep(min(2**attempt, 8))
+                throttled = response.status_code == 429
+                # 服务端给了 Retry-After 就按它等，别用固定退避硬撞限流。
+                header = response.headers.get("retry-after", "").strip()
+                if header.isdigit():
+                    retry_after = min(float(header), 30.0)
+            # 指数退避并加抖动：并发下多个请求同时重试会再次撞上限流。
+            delay = retry_after or min(2 ** attempt, 8)
+            delay += random.uniform(0, 0.5)
+            if throttled:
+                self._cooldown_until = max(self._cooldown_until, time.monotonic() + delay)
+            await asyncio.sleep(delay)
         raise RuntimeError("MODEL_RETRY_EXHAUSTED")
 
     async def ask(self, task: str, payload: dict, *, search: Search | None = None) -> dict:

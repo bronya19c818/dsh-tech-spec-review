@@ -124,10 +124,18 @@ async def review_language(
     directory: Path,
     *,
     workers: int = 4,
+    batch_size: int = 8,
     progress=None,
 ) -> TaskResult:
+    """逐句文字质量审查。
+
+    句子按 batch_size 打包成一次模型调用（默认 8 句），把请求数从"一句一次"
+    降到"一批一次"；某批输出不合法时退回逐句重问该批，保证结论不因批处理丢失。
+    """
     if workers < 1:
         raise ValueError("WORKERS_MUST_BE_POSITIVE")
+    if batch_size < 1:
+        raise ValueError("BATCH_SIZE_MUST_BE_POSITIVE")
     rule_data = [rule.verify().model_dump() for rule in rules]
     units = sentences(document)
     cache_key = hashlib.sha256(
@@ -136,7 +144,8 @@ async def review_language(
                 "source": document.sha256,
                 "rules": rule_data,
                 "object_scope": object_scope,
-                "sentence_policy": 3,
+                "sentence_policy": 4,
+                "batch_size": batch_size,
                 "units": units,
             },
             ensure_ascii=False,
@@ -144,40 +153,94 @@ async def review_language(
         ).encode()
     ).hexdigest()
     cache = directory / "sentences" / cache_key
+    batches = [units[i : i + batch_size] for i in range(0, len(units), batch_size)]
     queue: asyncio.Queue = asyncio.Queue()
-    for unit in units:
-        queue.put_nowait(unit)
-    answers = {}
-    failures = []
+    for batch in batches:
+        queue.put_nowait(batch)
+    answers: dict[str, dict] = {}
+    failures: list[dict] = []
     completed = 0
     progress_lock = asyncio.Lock()
+
+    async def ask_one(unit: dict) -> dict:
+        path = cache / (unit["id"] + ".json")
+        if await asyncio.to_thread(path.exists):
+            answer = await read_json(path)
+        else:
+            answer = await model.ask(
+                "sentence", {**unit, "object_scope": object_scope, "rules": rule_data}
+            )
+            validate_sentence(answer, unit["text"])
+            await write_json(path, answer)
+        validate_sentence(answer, unit["text"])
+        return answer
+
+    async def ask_batch(batch: list[dict]) -> dict[str, dict]:
+        path = cache / (batch[0]["id"] + ".batch.json")
+        if await asyncio.to_thread(path.exists):
+            payload = await read_json(path)
+        else:
+            payload = await model.ask(
+                "sentence_batch",
+                {
+                    "items": [
+                        {"id": unit["id"], "text": unit["text"], "source_type": unit["source_type"]}
+                        for unit in batch
+                    ],
+                    "object_scope": object_scope,
+                    "rules": rule_data,
+                },
+            )
+            await write_json(path, payload)
+        decisions = payload.get("decisions") if isinstance(payload, dict) else None
+        if not isinstance(decisions, list):
+            raise ValueError("BATCH_DECISIONS_REQUIRED")
+        by_id: dict[str, dict] = {}
+        for decision in decisions:
+            if isinstance(decision, dict) and isinstance(decision.get("id"), str):
+                by_id.setdefault(decision["id"], decision)
+        resolved: dict[str, dict] = {}
+        for unit in batch:
+            decision = by_id.get(unit["id"])
+            if decision is None:
+                raise ValueError("BATCH_COVERAGE_INVALID")
+            answer = {
+                key: decision.get(key, "")
+                for key in ("has_issue", "type", "reason", "suggestion", "quote")
+            }
+            validate_sentence(answer, unit["text"])
+            resolved[unit["id"]] = answer
+        return resolved
 
     async def worker():
         nonlocal completed
         while not queue.empty():
-            unit = queue.get_nowait()
+            batch = queue.get_nowait()
             try:
-                path = cache / (unit["id"] + ".json")
-                if await asyncio.to_thread(path.exists):
-                    answer = await read_json(path)
+                answers.update(await ask_batch(batch))
+            except Exception as batch_error:  # noqa: BLE001 - 整批不可用就退回逐句
+                # 限流/传输类错误说明服务端压力已高，逐句重问只会火上浇油：
+                # 直接记失败，让上层按可重试错误处理。
+                if isinstance(batch_error, RuntimeError) and str(batch_error).startswith(
+                    ("MODEL_HTTP_429", "MODEL_HTTP_5", "MODEL_TRANSPORT_ERROR", "MODEL_RETRY_EXHAUSTED")
+                ):
+                    for unit in batch:
+                        failures.append({"id": unit["id"], "error_type": str(batch_error)})
                 else:
-                    answer = await model.ask(
-                        "sentence", {**unit, "object_scope": object_scope, "rules": rule_data}
-                    )
-                    validate_sentence(answer, unit["text"])
-                    await write_json(path, answer)
-                validate_sentence(answer, unit["text"])
-                answers[unit["id"]] = answer
-            except Exception as exc:
-                failures.append({"id": unit["id"], "error_type": type(exc).__name__})
+                    # 输出不合规（漏 id、字段非法）才值得逐句重问，宁可多花几次调用也不丢句子。
+                    for unit in batch:
+                        try:
+                            answers[unit["id"]] = await ask_one(unit)
+                        except Exception as exc:  # noqa: BLE001 - 单句失败要记下来而不是中断
+                            failures.append({"id": unit["id"], "error_type": type(exc).__name__})
             finally:
                 async with progress_lock:
-                    completed += 1
+                    completed += len(batch)
                     if progress:
                         await progress(completed, len(units))
                 queue.task_done()
 
-    await asyncio.gather(*(worker() for _ in range(min(workers, max(1, len(units))))))
+    await asyncio.gather(*(worker() for _ in range(min(workers, max(1, len(batches))))))
     await write_json(directory / "sentence-failures.json", failures)
     if failures:
         raise RuntimeError(f"SENTENCE_FAILURES:{len(failures)}")
@@ -189,6 +252,8 @@ async def review_language(
         "completed": len(answers),
         "failed": 0,
         "issues": sum(1 for answer in answers.values() if answer["has_issue"]),
+        "batch_size": batch_size,
+        "batch_count": len(batches),
     }
     if not rules:
         result.gaps.append("未取得 active 文字规则，本轮仅按通用文字质量提示执行。")
