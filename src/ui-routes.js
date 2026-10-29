@@ -18,9 +18,10 @@ const REVIEW_LIMIT = 30
 const MAX_BODY_BYTES = 1 << 20
 
 const SETTINGS_INT_RANGES = {}
-const SETTINGS_FLOAT_RANGES = { rerankThreshold: [0, 1] }
+const SETTINGS_FLOAT_RANGES = { rerankThreshold: [0, 1], gateThreshold: [0, 1] }
 const SETTINGS_STRINGS = new Set([
-  'chatBaseUrl', 'chatModel', 'rerankBaseUrl', 'rerankModel', 'rulesBaseUrl', 'pythonPath',
+  'chatBaseUrl', 'chatModel', 'rerankBaseUrl', 'rerankModel', 'rulesBaseUrl',
+  'gateBaseUrl', 'pythonPath',
 ])
 // 嵌入模型与向量索引在规则服务端，客户端不保存这两类配置。
 const SETTINGS_ENV = {
@@ -30,6 +31,9 @@ const SETTINGS_ENV = {
   rerankModel: 'TSR_RERANK_MODEL',
   rerankThreshold: 'TSR_RERANK_THRESHOLD',
   rulesBaseUrl: 'TSR_REGISTRY_URL',
+  // B02 前置筛句：地址与阈值走环境变量，密钥仍由凭据库提供。
+  gateBaseUrl: 'TSR_GATE_BASE_URL',
+  gateThreshold: 'TSR_GATE_THRESHOLD',
 }
 
 function readJson(path) {
@@ -306,14 +310,19 @@ export async function handleUiRequest(req, res, state, deps) {
       const chat = await deps.readCredential(deps.CHAT_KEY_REF)
       const rerank = await deps.readCredential(deps.RERANK_KEY_REF)
       const rules = await deps.readCredential(deps.RULES_TOKEN_REF)
+      const gate = await deps.readCredential(deps.GATE_KEY_REF)
       writeJson(res, 200, {
         values: currentValues(stored),
         stored,
-        secrets: { chat: Boolean(chat), rerank: Boolean(rerank), rules: Boolean(rules) },
+        secrets: {
+          chat: Boolean(chat), rerank: Boolean(rerank),
+          rules: Boolean(rules), gate: Boolean(gate),
+        },
         refs: {
           chat: deps.CHAT_KEY_REF,
           rerank: deps.RERANK_KEY_REF,
           rules: deps.RULES_TOKEN_REF,
+          gate: deps.GATE_KEY_REF,
         },
         stack: { up: Boolean(state.mcpPort), mcpPort: state.mcpPort },
       })

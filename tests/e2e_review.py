@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -90,11 +91,30 @@ def load_env() -> None:
         "rerankModel": "TSR_RERANK_MODEL",
         "rerankThreshold": "TSR_RERANK_THRESHOLD",
         "rulesBaseUrl": "TSR_REGISTRY_URL",
+        "gateBaseUrl": "TSR_GATE_BASE_URL",
+        "gateThreshold": "TSR_GATE_THRESHOLD",
     }
     for key, name in mapping.items():
         value = stored.get(key)
         if value not in (None, "") and name not in os.environ:
             os.environ[name] = str(value)
+
+    # 密钥与插件一样从 DSH 凭据库取，避免测试依赖开发用的 keys.env
+    refs = {
+        "TSR_CHAT_API_KEY": "TSR_MODEL_API_KEY",
+        "TSR_RERANK_API_KEY": "TSR_RERANK_API_KEY",
+        "TSR_GATE_API_KEY": "TSR_GATE_API_KEY",
+    }
+    store = home / ".credentials.yaml"
+    if store.exists():
+        text = store.read_text(encoding="utf-8", errors="replace")
+        for ref, env_name in refs.items():
+            # keys.env 里留空的占位会写进环境，此时应继续从凭据库补
+            if os.environ.get(env_name):
+                continue
+            match = re.search(rf"^\s*{re.escape(ref)}:\s*(\S+)\s*$", text, re.M)
+            if match:
+                os.environ[env_name] = match.group(1)
 
 
 def resolve_rules_url() -> str:

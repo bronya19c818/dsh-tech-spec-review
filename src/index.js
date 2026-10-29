@@ -29,6 +29,8 @@ export const CHAT_KEY_REF = 'TSR_CHAT_API_KEY'
 export const RERANK_KEY_REF = 'TSR_RERANK_API_KEY'
 /** 规则服务的访问令牌：仅当服务端对外监听并设置了 RULE_SERVER_TOKEN 时才需要。 */
 export const RULES_TOKEN_REF = 'TSR_RULES_TOKEN'
+/** B02 前置筛句用的决策模型密钥（如 Cloudflare Workers AI）。 */
+export const GATE_KEY_REF = 'TSR_GATE_API_KEY'
 
 /** 设置文件里的字段到子进程环境变量的映射；设置文件本身由本地栈读取。 */
 const SETTINGS_ENV = {
@@ -38,6 +40,8 @@ const SETTINGS_ENV = {
   rerankModel: 'TSR_RERANK_MODEL',
   rerankThreshold: 'TSR_RERANK_THRESHOLD',
   rulesBaseUrl: 'TSR_REGISTRY_URL',
+  gateBaseUrl: 'TSR_GATE_BASE_URL',
+  gateThreshold: 'TSR_GATE_THRESHOLD',
 }
 
 function pluginLog(dataDir, line) {
@@ -222,9 +226,11 @@ export function apply(ctx, config = {}) {
       const chatKey = await readCredential(CHAT_KEY_REF)
       const rerankKey = await readCredential(RERANK_KEY_REF)
       const rulesToken = await readCredential(RULES_TOKEN_REF)
+      const gateKey = await readCredential(GATE_KEY_REF)
       if (chatKey) env.TSR_MODEL_API_KEY = chatKey
       if (rerankKey) env.TSR_RERANK_API_KEY = rerankKey
       if (rulesToken) env.TSR_REGISTRY_API_KEY = rulesToken
+      if (gateKey) env.TSR_GATE_API_KEY = gateKey
       // 本地回环请求必须绕开系统代理
       for (const k of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']) {
         delete env[k]
@@ -289,7 +295,7 @@ export function apply(ctx, config = {}) {
       path: UI_PREFIX,
       handler: (request, response) => handleUiRequest(request, response, state, {
         loadSettings, settingsToEnv, readCredential,
-        CHAT_KEY_REF, RERANK_KEY_REF, RULES_TOKEN_REF,
+        CHAT_KEY_REF, RERANK_KEY_REF, RULES_TOKEN_REF, GATE_KEY_REF,
         // 重启不阻塞响应：栈起得慢（首次 initdb 可达一分钟），
         // 请求方只关心"已受理"，进度由状态页轮询体现。
         restart: async () => {

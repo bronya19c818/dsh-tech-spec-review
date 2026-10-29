@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 from .artifacts import read_json, write_json
+from .gate import GateError, obvious_defects
 from .models import DocumentEvidence, Finding, Rule, TaskResult
 
 NON_PROSE_ROLES = {
@@ -87,7 +88,10 @@ def sentences(document: DocumentEvidence) -> list[dict]:
             continue
         # Decimal values, models and standard identifiers must not be split at periods.
         for text in split_sentences(block.text):
-            if text.strip():
+            text = text.strip()
+            # 纯标点的碎片（"。。"被拆出的"。"）没有独立审查价值，
+            # 这类问题由段落层的确定性检查捕获，避免同一处报两次。
+            if text and re.search(r"[\w\u4e00-\u9fff]", text):
                 units.append(
                     {
                         "id": f"S{len(units) + 1:06d}",
@@ -99,6 +103,34 @@ def sentences(document: DocumentEvidence) -> list[dict]:
                     }
                 )
     return units
+
+
+def block_contexts(document: DocumentEvidence) -> dict[str, str]:
+    """为每个块准备判断句子时可用的上下文。
+
+    只把"所属章节标题 + 本段原文"交给模型：章节标题解决"这句话在说什么"，
+    本段原文解决指代、并列结构和"如下所示"这类悬空表述。整篇塞进去既超长
+    也没有额外价值。
+    """
+    context: dict[str, str] = {}
+    current_heading = ""
+    paragraphs: dict[str, list[str]] = {}
+    for block in document.blocks:
+        if block.role == "heading":
+            current_heading = block.text.strip()
+            continue
+        paragraphs[block.id] = [current_heading, block.text.strip()]
+    for block in document.blocks:
+        parts = paragraphs.get(block.id)
+        if not parts:
+            continue
+        heading, text = parts
+        piece = []
+        if heading:
+            piece.append(f"所属章节：{heading}")
+        piece.append(f"本段原文：{text}")
+        context[block.id] = "\n".join(piece)
+    return context
 
 
 def validate_sentence(answer: dict, text: str) -> None:
@@ -125,27 +157,108 @@ async def review_language(
     *,
     workers: int = 4,
     batch_size: int = 8,
+    gate=None,
+    gate_threshold: float = 0.5,
     progress=None,
 ) -> TaskResult:
-    """逐句文字质量审查。
+    """逐句文字质量审查，三层递进。
 
-    句子按 batch_size 打包成一次模型调用（默认 8 句），把请求数从"一句一次"
-    降到"一批一次"；某批输出不合法时退回逐句重问该批，保证结论不因批处理丢失。
+    T0 确定性规则：重复字词、标点连用这类问题直接定性，不进模型。
+    T1 决策模型筛选：对剩余句子打分，低于阈值的放行，不交对话模型。
+    T2 对话模型：只处理 T1 判为疑似的句子，按 batch_size 打包调用。
+
+    T1 不可用（未配置、网络失败、返回不合法）时整批退回 T2，绝不静默丢句。
     """
     if workers < 1:
         raise ValueError("WORKERS_MUST_BE_POSITIVE")
     if batch_size < 1:
         raise ValueError("BATCH_SIZE_MUST_BE_POSITIVE")
+    if not 0.0 <= gate_threshold <= 1.0:
+        raise ValueError("GATE_THRESHOLD_OUT_OF_RANGE")
+
     rule_data = [rule.verify().model_dump() for rule in rules]
     units = sentences(document)
+    contexts = block_contexts(document)
+
+    # --- T0：确定性判定（只补模型盲区，命中的句子不再送后续环节）----------
+    # 实测 Clef 对半角标点、重复标点不敏感（0.26 分，低于阈值），而这两类
+    # 正则能确定性判断。T0 命中的句子直接出结论，既不送筛选也不送 LLM，
+    # 因此不会与后续环节重复报同一处。
+    defects: dict[str, list[tuple[str, str, str]]] = {}
+    for unit in units:
+        found = obvious_defects(unit["text"])
+        if found:
+            defects[unit["id"]] = found
+    # 重复标点在分词阶段就会被拆成两句，单句检查看不到，改在段落层补一次。
+    for block in document.blocks:
+        if block.role in NON_PROSE_ROLES:
+            continue
+        extra = obvious_defects(block.text)
+        repeated = [item for item in extra if item[0] == "标点错误" and len(item[1]) > 1]
+        if not repeated:
+            continue
+        owner = next(
+            (unit for unit in units if unit["evidence_id"] == block.id and unit["id"] not in defects),
+            None,
+        )
+        if owner is not None:
+            defects[owner["id"]] = repeated
+
+    pending = [unit for unit in units if unit["id"] not in defects]
+
+    # --- T1：决策模型筛选（对 T0 未命中的句子）----------------------------
+    gate_scores: dict[str, float] = {}
+    gate_note = ""
+    if gate is not None and pending and gate_threshold < 1.0:
+        # 按段落的上下文拼成若干批：一次调用能问 40 句，逐段调用会把
+        # 几十次串行请求的延迟加起来，比纯 LLM 还慢。
+        limit = 40
+        chunks: list[tuple[str, list[dict]]] = []
+        current: list[dict] = []
+        current_contexts: list[str] = []
+        seen_contexts: set[str] = set()
+        for unit in units:
+            if len(current) >= limit:
+                chunks.append(("\n\n".join(current_contexts), current))
+                current, current_contexts, seen_contexts = [], [], set()
+            current.append(unit)
+            context = contexts.get(unit["evidence_id"], "")
+            if context and context not in seen_contexts:
+                seen_contexts.add(context)
+                current_contexts.append(context)
+        if current:
+            chunks.append(("\n\n".join(current_contexts), current))
+
+        groups: list[tuple[str, list[str]]] = [
+            (state, [unit["text"] for unit in chunk]) for state, chunk in chunks
+        ]
+        order: list[dict] = [unit for _, chunk in chunks for unit in chunk]
+        try:
+            scores = await gate.score(groups)
+            if len(scores) != len(order):
+                raise GateError("GATE_COVERAGE_INVALID")
+            for unit, score in zip(order, scores):
+                gate_scores[unit["id"]] = round(float(score), 4)
+        except GateError as exc:
+            gate_note = f"筛选模型不可用（{exc}），本轮全部句子交对话模型判断。"
+            gate_scores = {}
+
+    if gate_scores:
+        suspect = [unit for unit in pending if gate_scores.get(unit["id"], 1.0) >= gate_threshold]
+        passed = [unit for unit in pending if gate_scores.get(unit["id"], 1.0) < gate_threshold]
+    else:
+        suspect, passed = pending, []
+
+    # --- T2：对话模型只处理疑似句 ---------------------------------------
     cache_key = hashlib.sha256(
         json.dumps(
             {
                 "source": document.sha256,
                 "rules": rule_data,
                 "object_scope": object_scope,
-                "sentence_policy": 4,
+                "sentence_policy": 5,
                 "batch_size": batch_size,
+                "gate_threshold": gate_threshold if gate_scores else None,
                 "units": units,
             },
             ensure_ascii=False,
@@ -153,7 +266,7 @@ async def review_language(
         ).encode()
     ).hexdigest()
     cache = directory / "sentences" / cache_key
-    batches = [units[i : i + batch_size] for i in range(0, len(units), batch_size)]
+    batches = [suspect[i : i + batch_size] for i in range(0, len(suspect), batch_size)]
     queue: asyncio.Queue = asyncio.Queue()
     for batch in batches:
         queue.put_nowait(batch)
@@ -168,7 +281,13 @@ async def review_language(
             answer = await read_json(path)
         else:
             answer = await model.ask(
-                "sentence", {**unit, "object_scope": object_scope, "rules": rule_data}
+                "sentence",
+                {
+                    **unit,
+                    "context": contexts.get(unit["evidence_id"], ""),
+                    "object_scope": object_scope,
+                    "rules": rule_data,
+                },
             )
             validate_sentence(answer, unit["text"])
             await write_json(path, answer)
@@ -184,7 +303,12 @@ async def review_language(
                 "sentence_batch",
                 {
                     "items": [
-                        {"id": unit["id"], "text": unit["text"], "source_type": unit["source_type"]}
+                        {
+                            "id": unit["id"],
+                            "text": unit["text"],
+                            "source_type": unit["source_type"],
+                            "context": contexts.get(unit["evidence_id"], ""),
+                        }
                         for unit in batch
                     ],
                     "object_scope": object_scope,
@@ -237,28 +361,67 @@ async def review_language(
                 async with progress_lock:
                     completed += len(batch)
                     if progress:
-                        await progress(completed, len(units))
+                        await progress(completed, len(suspect))
                 queue.task_done()
 
-    await asyncio.gather(*(worker() for _ in range(min(workers, max(1, len(batches))))))
+    if batches:
+        await asyncio.gather(*(worker() for _ in range(min(workers, max(1, len(batches))))))
     await write_json(directory / "sentence-failures.json", failures)
     if failures:
         raise RuntimeError(f"SENTENCE_FAILURES:{len(failures)}")
+
+    # --- 汇总 -----------------------------------------------------------
+    screened_answers = {
+        unit["id"]: {
+            "has_issue": False, "type": "", "reason": "", "suggestion": "", "quote": "",
+        }
+        for unit in passed
+    }
     result = TaskResult(
         task_id="B02", object_scope=object_scope, scope=[u["id"] for u in units], rules=rule_data
     )
     result.stats = {
         "total": len(units),
-        "completed": len(answers),
+        "deterministic": len(defects),
+        "gate_scored": len(gate_scores),
+        "gate_suspect": len(suspect) if gate_scores else 0,
+        "gate_passed": len(passed),
+        "llm_checked": len(answers),
+        "completed": len(answers) + len(passed),
         "failed": 0,
-        "issues": sum(1 for answer in answers.values() if answer["has_issue"]),
+        "issues": sum(1 for answer in answers.values() if answer["has_issue"])
+        + sum(len(found) for found in defects.values()),
         "batch_size": batch_size,
         "batch_count": len(batches),
+        # 阈值按千分比存整数：stats 的类型是 dict[str, int]
+        "gate_threshold_permille": int(round(gate_threshold * 1000)) if gate_scores else 0,
     }
     if not rules:
         result.gaps.append("未取得 active 文字规则，本轮仅按通用文字质量提示执行。")
+    if gate_note:
+        result.gaps.append(gate_note)
+    if passed:
+        result.gaps.append(
+            f"另有 {len(passed)} 句经筛选模型判定无文字问题，未送对话模型判断。"
+        )
+
     for unit in units:
-        answer = answers[unit["id"]]
+        if unit["id"] in defects:
+            for category, evidence, detail in defects[unit["id"]]:
+                result.findings.append(
+                    Finding(
+                        code="TEXT_DEFECT",
+                        detail=f"{category}：{detail}",
+                        evidence_ids=[unit["evidence_id"]],
+                        target=unit["id"],
+                        suggestion=f"核对并修正{category}：{evidence}",
+                        disposition="candidate",
+                    )
+                )
+            continue
+        answer = answers.get(unit["id"])
+        if answer is None:
+            continue
         if answer["has_issue"]:
             result.findings.append(
                 Finding(
@@ -270,5 +433,25 @@ async def review_language(
                     disposition="candidate",
                 )
             )
-    result.decisions = [{**unit, **answers[unit["id"]]} for unit in units]
+
+    decisions = []
+    for unit in units:
+        if unit["id"] in defects:
+            decisions.append({
+                **unit,
+                "has_issue": True,
+                "type": defects[unit["id"]][0][0],
+                "reason": defects[unit["id"]][0][2],
+                "suggestion": "",
+                "quote": defects[unit["id"]][0][1],
+                "source": "deterministic",
+            })
+        elif unit["id"] in answers:
+            decisions.append({**unit, **answers[unit["id"]], "source": "llm",
+                              "gate_score": gate_scores.get(unit["id"])})
+        else:
+            decisions.append({**unit, **screened_answers[unit["id"]],
+                              "source": "screened",
+                              "gate_score": gate_scores.get(unit["id"])})
+    result.decisions = decisions
     return result.assign_ids()

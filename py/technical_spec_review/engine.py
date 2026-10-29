@@ -38,6 +38,8 @@ class ReviewService:
         concurrency: int = 4,
         b02_concurrency: int | None = None,
         b02_batch: int = 8,
+        gate=None,
+        gate_threshold: float = 0.5,
         upload_store: UploadStore | None = None,
     ):
         sentence_concurrency = concurrency if b02_concurrency is None else b02_concurrency
@@ -49,6 +51,8 @@ class ReviewService:
         self.registry, self.model, self.concurrency = registry, model, concurrency
         self.b02_concurrency = sentence_concurrency
         self.b02_batch = b02_batch
+        self.gate = gate
+        self.gate_threshold = gate_threshold
         self.upload_store = upload_store
         self.active: dict[str, asyncio.Task] = {}
         self.locks: dict[str, asyncio.Lock] = {}
@@ -460,6 +464,8 @@ class ReviewService:
                 self.directory(rid),
                 workers=self.b02_concurrency,
                 batch_size=self.b02_batch,
+                gate=self.gate,
+                gate_threshold=self.gate_threshold,
                 progress=progress,
             )
         if task_id == "B03":

@@ -23,6 +23,9 @@ SETTINGS_ENV = {
     "rerankModel": "TSR_RERANK_MODEL",
     "rerankThreshold": "TSR_RERANK_THRESHOLD",
     "rulesBaseUrl": "TSR_REGISTRY_URL",
+    # B02 前置筛句（决策模型）；密钥由 Host 读凭据库后注入 TSR_GATE_API_KEY。
+    "gateBaseUrl": "TSR_GATE_BASE_URL",
+    "gateThreshold": "TSR_GATE_THRESHOLD",
 }
 
 

@@ -407,8 +407,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    // 三个模型/服务各自成块；嵌入模型只读展示 —— 它跟着规则服务的索引走，
-    // 客户端改不了，改了就与索引不在同一向量空间。
+    // 对话、Gate、重排、规则服务各自成块；Gate 只用于 B02 筛句，不输出到进程环境（凭据走 DSH）。
     const EDITABLE_GROUPS = [
       {
         id: 'chat',
@@ -419,6 +418,17 @@ window.__ModuleLoader__.load({
           { key: 'chatModel', label: '模型名', placeholder: '模型标识' },
         ],
         secret: true,
+      },
+      {
+        id: 'gate',
+        title: 'B02 筛选模型',
+        hint: '可选。对句子先做一次打分，超过阈值的句子才交给对话模型；不配置则全部句子直接送对话模型。',
+        fields: [
+          { key: 'gateBaseUrl', label: '接口地址', placeholder: 'https://api.cloudflare.com/client/v4/accounts/<ID>/ai/run/@cf/cloudflare/clef' },
+          { key: 'gateThreshold', label: '筛选阈值', type: 'number', placeholder: '0.5', width: 'half' },
+        ],
+        secret: true,
+        keyLabel: 'API Key',
       },
       {
         id: 'rerank',
@@ -437,11 +447,12 @@ window.__ModuleLoader__.load({
       const { setSecret, unsetSecret } = props
       useStyles()
       const [values, setValues] = useState(null)
-      const [secrets, setSecrets] = useState({ chat: false, rerank: false, rules: false })
+      const [secrets, setSecrets] = useState({ chat: false, gate: false, rerank: false, rules: false })
       const [refs, setRefs] = useState({
-        chat: 'TSR_CHAT_API_KEY', rerank: 'TSR_RERANK_API_KEY', rules: 'TSR_RULES_TOKEN',
+        chat: 'TSR_CHAT_API_KEY', gate: 'TSR_GATE_API_KEY',
+        rerank: 'TSR_RERANK_API_KEY', rules: 'TSR_RULES_TOKEN',
       })
-      const [drafts, setDrafts] = useState({ chat: '', rerank: '', rules: '' })
+      const [drafts, setDrafts] = useState({ chat: '', gate: '', rerank: '', rules: '' })
       const [serverInfo, setServerInfo] = useState(null)
       const [message, setMessage] = useState('')
       const [level, setLevel] = useState('dim')
@@ -486,11 +497,11 @@ window.__ModuleLoader__.load({
           }
           // 先落配置再写密钥：密钥服务出问题不该把已经填好的地址和模型名一起丢掉。
           await postJson('/settings', { values: payload })
-          for (const id of ['chat', 'rerank', 'rules']) {
+          for (const id of ['chat', 'gate', 'rerank', 'rules']) {
             const draft = drafts[id]
             if (draft) await setSecret(refs[id], draft)
           }
-          setDrafts({ chat: '', rerank: '', rules: '' })
+          setDrafts({ chat: '', gate: '', rerank: '', rules: '' })
           setMessage('已保存。重启后端后生效。')
           setLevel('success')
           await load()

@@ -49,6 +49,10 @@ class Config:
     rerank_url: str = ""
     rerank_model: str = ""
     rerank_key: str = ""
+    # B02 前置筛句（决策模型，可选）：打分低于阈值即放行，不交对话模型
+    gate_url: str = ""
+    gate_key: str = ""
+    gate_threshold: float = 0.5
     rerank_format: str = "auto"  # auto | cf | openai
     rerank_recall: int = 24
     rerank_top_k: int = 8
@@ -102,6 +106,9 @@ class Config:
             rerank_recall=int(env.get("TSR_RERANK_RECALL", "24")),
             rerank_top_k=int(env.get("TSR_RERANK_TOP_K", "8")),
             rerank_threshold=float(env.get("TSR_RERANK_THRESHOLD", "0")),
+            gate_url=env.get("TSR_GATE_BASE_URL", ""),
+            gate_key=env.get("TSR_GATE_API_KEY", ""),
+            gate_threshold=float(env.get("TSR_GATE_THRESHOLD", "0.5")),
             concurrency=int(os.getenv("TSR_CONCURRENCY", "4")),
             b02_concurrency=int(os.getenv("TSR_B02_CONCURRENCY", "8")),
             b02_batch=int(os.getenv("TSR_B02_BATCH", "8")),
@@ -152,6 +159,21 @@ async def _runtime(
                 fmt=config.rerank_format,
             )
 
+        # B02 前置筛句的决策模型：未配置则不筛，全部句子交对话模型。
+        gate = None
+        if config.gate_url:
+            from .gate import ClefGate, GateError
+
+            try:
+                gate = ClefGate(
+                    http,
+                    config.gate_url,
+                    config.gate_key,
+                    threshold=config.gate_threshold,
+                )
+            except GateError as exc:
+                print(f"[config] 筛选模型不可用，本轮不筛句：{exc}", flush=True)
+
         registry = RegistryClient(
             http,
             config.registry_url,
@@ -199,6 +221,8 @@ async def _runtime(
             concurrency=config.concurrency,
             b02_concurrency=config.b02_concurrency,
             b02_batch=config.b02_batch,
+            gate=gate,
+            gate_threshold=config.gate_threshold,
             upload_store=upload_store,
         )
         try:
