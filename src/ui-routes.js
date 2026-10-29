@@ -1,20 +1,21 @@
 /**
  * 状态页/设置页的数据接口（Host 侧同源路由）。
  *
- * 挂在宿主 webServer 的 /api/technical-spec-review/ 前缀下，与 GUI 同源，
- * 因此不受跨源限制。只读状态 + 非敏感设置；密钥仍由 DSH 凭据库存放，
- * 这里只报告"是否已配置"。
+ * 宿主 webServer 的 handler 契约是 Node 原生 (req, res)：自己写状态码和响应体，
+ * 返回 Response 没有任何作用。这里统一用 writeJson(res, ...)。
+ * 挂在 /api/technical-spec-review 前缀下，与 GUI 同源，因此不受跨源限制。
+ * 只读状态 + 非敏感设置；密钥仍由 DSH 凭据库存放，这里只报告"是否已配置"。
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { join } from 'node:path'
 
-// 前缀不带尾斜杠：宿主按 pathname === prefix 或 startsWith(prefix + '/') 匹配，
-// 带尾斜杠会拼成双斜杠，所有子路径都匹配不上（表现为整页 404）。
+// 前缀不带尾斜杠：宿主按 pathname === prefix 或 startsWith(prefix + '/') 匹配。
 export const UI_PREFIX = '/api/technical-spec-review'
 
 const REVIEW_ID_RE = /^[A-Za-z0-9_-]{1,64}$/
 const REVIEW_LIMIT = 30
+const MAX_BODY_BYTES = 1 << 20
 
 const SETTINGS_INT_RANGES = {}
 const SETTINGS_FLOAT_RANGES = { rerankThreshold: [0, 1] }
@@ -39,160 +40,156 @@ function readJson(path) {
   }
 }
 
-/** 校验一份设置补丁；非法字段抛错，绝不静默丢弃。 */
 export function validateSettings(patch) {
-  if (patch === null || typeof patch !== 'object' || Array.isArray(patch)) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
     throw new Error('settings must be an object')
   }
-  const out = {}
-  for (const [key, value] of Object.entries(patch)) {
-    if (SETTINGS_STRINGS.has(key)) {
-      if (typeof value !== 'string') throw new Error(`${key} must be a string`)
-      out[key] = value.trim()
-    } else if (SETTINGS_INT_RANGES[key] !== undefined) {
-      const [low, high] = SETTINGS_INT_RANGES[key]
-      const n = Number(value)
-      if (!Number.isInteger(n)) throw new Error(`${key} must be an integer`)
-      if (n < low || n > high) throw new Error(`${key} out of range [${low}, ${high}]`)
-      out[key] = n
-    } else if (SETTINGS_FLOAT_RANGES[key] !== undefined) {
-      const [low, high] = SETTINGS_FLOAT_RANGES[key]
-      const n = Number(value)
-      if (!Number.isFinite(n)) throw new Error(`${key} must be a number`)
-      if (n < low || n > high) throw new Error(`${key} out of range [${low}, ${high}]`)
-      out[key] = n
-    } else {
-      throw new Error(`unknown setting: ${key}`)
+  const accepted = {}
+  for (const [key, raw] of Object.entries(patch)) {
+    if (key in SETTINGS_INT_RANGES) {
+      const [min, max] = SETTINGS_INT_RANGES[key]
+      const value = Number(raw)
+      if (!Number.isInteger(value) || value < min || value > max) {
+        throw new Error(`${key} must be an integer in [${min}, ${max}]`)
+      }
+      accepted[key] = value
+      continue
     }
+    if (key in SETTINGS_FLOAT_RANGES) {
+      const [min, max] = SETTINGS_FLOAT_RANGES[key]
+      const value = Number(raw)
+      if (!Number.isFinite(value) || value < min || value > max) {
+        throw new Error(`${key} must be a number in [${min}, ${max}]`)
+      }
+      accepted[key] = value
+      continue
+    }
+    if (SETTINGS_STRINGS.has(key)) {
+      if (typeof raw !== 'string' || raw.length > 500) {
+        throw new Error(`${key} must be a string of at most 500 characters`)
+      }
+      accepted[key] = raw.trim()
+      continue
+    }
+    throw new Error(`unknown setting: ${key}`)
   }
-  return out
+  return accepted
 }
 
-/** 界面回显"当前生效值"：环境变量（含 keys.env）打底，设置文件覆盖。 */
 function currentValues(stored) {
-  const out = {}
-  for (const [key, name] of Object.entries(SETTINGS_ENV)) {
-    const raw = process.env[name]
-    if (raw === undefined || raw === '') continue
-    if (SETTINGS_INT_RANGES[key] !== undefined) {
-      const n = Number(raw)
-      if (Number.isInteger(n)) out[key] = n
-    } else if (SETTINGS_FLOAT_RANGES[key] !== undefined) {
-      const n = Number(raw)
-      if (Number.isFinite(n)) out[key] = n
-    } else {
-      out[key] = raw
-    }
+  const values = {}
+  for (const key of Object.keys(SETTINGS_ENV)) {
+    const value = stored?.[key]
+    if (value !== undefined && value !== '') values[key] = value
   }
-  for (const [key, value] of Object.entries(stored)) {
-    if (SETTINGS_ENV[key] !== undefined || SETTINGS_STRINGS.has(key)) out[key] = value
-  }
-  return out
+  if (stored?.pythonPath) values.pythonPath = stored.pythonPath
+  return values
 }
 
 function summarizeReview(runsDir, name) {
   const dir = join(runsDir, name)
   const state = readJson(join(dir, 'state.json'))
-  if (state === undefined || state === null) return undefined
+  if (!state) return undefined
+  const document = readJson(join(dir, 'document.json')) || {}
+  const summary = readJson(join(dir, 'summary.json')) || {}
   const tasks = state.tasks || {}
-  const ids = Object.keys(tasks).filter((k) => k !== 'INIT' && k !== 'SUMMARY')
-  const count = (status) => ids.filter((k) => (tasks[k] || {}).status === status).length
-  const summary = readJson(join(dir, 'summary.json'))
-  const groups = (summary && summary.groups) || []
-  const issues = groups.length > 0
-    ? groups.reduce((n, g) => n + ((g.issue_ids || []).length), 0)
-    : undefined
+  const chapterIds = (document.chapters || []).map((chapter) => chapter.id)
+  let total = 0
+  let completed = 0
+  let failed = 0
+  for (const [taskId, task] of Object.entries(tasks)) {
+    if (taskId === 'INIT' || taskId === 'SUMMARY') continue
+    if (taskId.startsWith('B05-')) continue
+    total += 1
+    if (task.status === 'COMPLETED') completed += 1
+    if (task.status === 'FAILED') failed += 1
+  }
+  for (const chapterId of chapterIds) {
+    total += 1
+    const task = tasks[`B05-${chapterId}`]
+    if (task?.status === 'COMPLETED') completed += 1
+    if (task?.status === 'FAILED') failed += 1
+  }
+  const groups = summary.groups || []
+  const issues = groups.reduce((sum, group) => sum + (group.issue_ids || []).length, 0)
   return {
-    id: state.review_id || name,
-    sourceName: state.source_name || '',
-    objectScope: state.object_scope || state.requested_object || '',
-    status: state.status || 'UNKNOWN',
-    error: state.error || null,
-    createdAt: state.created_at || null,
-    updatedAt: state.updated_at || null,
-    tasks: {
-      total: ids.length,
-      completed: count('COMPLETED'),
-      running: count('RUNNING'),
-      failed: count('FAILED'),
-      pending: count('PENDING'),
-    },
+    id: state.review_id,
+    name: state.source_name || name,
+    status: state.status,
+    objectScope: state.object_scope || '',
+    documentRole: state.document_role || '',
+    createdAt: state.created_at,
+    updatedAt: state.updated_at,
+    tasks: { total, completed, failed },
     issues,
-    hasReport: existsSync(join(dir, 'report.docx')),
+    error: state.error || '',
   }
 }
 
 function overview(state) {
   const runsDir = join(state.dataDir, 'runs')
-  const reviews = []
+  let reviews = []
   if (existsSync(runsDir)) {
-    for (const entry of readdirSync(runsDir, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue
-      const row = summarizeReview(runsDir, entry.name)
-      if (row !== undefined) reviews.push(row)
+    const names = readdirSync(runsDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+    for (const name of names) {
+      const summary = summarizeReview(runsDir, name)
+      if (summary) reviews.push(summary)
     }
+    reviews.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
   }
-  reviews.sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')))
   const limited = reviews.slice(0, REVIEW_LIMIT)
-  const stack = readJson(join(state.dataDir, 'stack.json')) || {}
-  const active = limited.find((r) => r.status === 'RUNNING') || limited[0]
   return {
-    dataDir: state.dataDir,
-    stack: {
-      up: Boolean(stack.mcp_url),
-      mcpUrl: stack.mcp_url || '',
-      registryUrl: stack.registry_url || '',
-      mcpPort: state.mcpPort || '',
-    },
     reviews: limited,
-    activeId: active ? active.id : '',
-    checkedAt: new Date().toISOString(),
+    activeId: limited[0]?.id || '',
+    stack: { up: Boolean(state.mcpPort), mcpPort: state.mcpPort },
   }
 }
 
 function reviewDetail(state, id) {
-  if (!REVIEW_ID_RE.test(id || '')) throw new Error('invalid review id')
+  if (!REVIEW_ID_RE.test(id)) throw new Error('invalid review id')
   const dir = join(state.dataDir, 'runs', id)
-  const st = readJson(join(dir, 'state.json'))
-  if (st === undefined || st === null) throw new Error('review not found')
+  const stateJson = readJson(join(dir, 'state.json'))
+  if (!stateJson) throw new Error('review not found')
   const document = readJson(join(dir, 'document.json')) || {}
   const summary = readJson(join(dir, 'summary.json')) || {}
-  const tasks = st.tasks || {}
-  const chapters = (document.chapters || []).map((ch) => {
-    const task = tasks['B05-' + ch.id] || {}
-    const result = readJson(join(dir, `B05-${ch.id}.json`)) || {}
-    const findings = result.findings
+  const tasks = stateJson.tasks || {}
+  const chapters = (document.chapters || []).map((chapter) => {
+    const task = tasks[`B05-${chapter.id}`] || {}
+    const result = readJson(join(dir, `B05-${chapter.id}.json`)) || {}
     return {
-      id: ch.id,
-      part: ch.part || '全文',
-      number: ch.number || '',
-      title: ch.title || '',
+      id: chapter.id,
+      part: chapter.part,
+      number: chapter.number,
+      title: chapter.title,
       status: task.status || 'PENDING',
-      error: task.error || null,
-      findings: Array.isArray(findings) ? findings.length : undefined,
-      route: result.route,
-      queries: Array.isArray(result.queries) ? result.queries.length : undefined,
+      error: task.error || '',
+      route: result.route || '',
+      findings: (result.findings || []).length,
+      queries: (result.queries || []).length,
     }
   })
-  const basics = ['B01', 'B02', 'B03', 'B04'].map((key) => {
-    const task = tasks[key] || {}
+  const basics = ['B01', 'B02', 'B03', 'B04'].map((taskId) => {
+    const task = tasks[taskId] || {}
+    const result = readJson(join(dir, `${taskId}.json`)) || {}
     return {
-      id: key,
+      id: taskId,
       status: task.status || 'PENDING',
-      error: task.error || null,
-      progress: task.progress || [0, 1],
+      error: task.error || '',
+      findings: (result.findings || []).length,
+      stats: result.stats || {},
     }
   })
   return {
-    summary: summarizeReview(join(state.dataDir, 'runs'), id),
-    sourceName: st.source_name || '',
-    objectScope: st.object_scope || '',
-    documentRole: st.document_role || '',
-    limitations: document.limitations || [],
-    basics,
+    id,
+    status: stateJson.status,
+    error: stateJson.error || '',
     chapters,
+    basics,
     groups: summary.groups || [],
     summaryText: summary.summary || '',
+    limitations: document.limitations || [],
   }
 }
 
@@ -240,36 +237,76 @@ function getJsonFrom(url, timeoutMs = 5000) {
   })
 }
 
-function json(body, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+function writeJson(res, status, body) {
+  const payload = JSON.stringify(body)
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+    'referrer-policy': 'no-referrer',
   })
+  res.end(payload)
+}
+
+async function readJsonBody(req) {
+  const chunks = []
+  let size = 0
+  for await (const chunk of req) {
+    size += chunk.length
+    if (size > MAX_BODY_BYTES) return undefined
+    chunks.push(chunk)
+  }
+  if (chunks.length === 0) return {}
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  } catch {
+    return undefined
+  }
+}
+
+/** 只接受同源请求：拒绝跨站发起，Origin 存在时必须与 Host 一致。 */
+function isSameOrigin(req) {
+  if (req.headers['sec-fetch-site'] === 'cross-site') return false
+  const host = req.headers.host
+  if (typeof host !== 'string' || host.length === 0) return false
+  const origin = req.headers.origin
+  if (origin !== undefined) {
+    try {
+      if (new URL(origin).host !== host) return false
+    } catch {
+      return false
+    }
+  }
+  return true
 }
 
 /**
  * 处理 /api/technical-spec-review/* 的请求。
- * @param request - 宿主转发的 HTTP 请求。
+ * @param req - Node IncomingMessage（宿主原样转交）。
+ * @param res - Node ServerResponse，由本函数负责写响应。
  * @param state - 插件运行状态（dataDir、mcpPort）。
- * @param deps - 设置读写、凭据读取与重启能力。
- * @returns 同源 JSON 响应。
+ * @param deps - 宿主能力（设置读写、凭据查询、重启）。
  */
-export async function handleUiRequest(request, state, deps) {
-  const url = new URL(request.url)
+export async function handleUiRequest(req, res, state, deps) {
+  const url = new URL(req.url ?? '/', 'http://localhost')
   const path = url.pathname.slice(UI_PREFIX.length)
+  const method = req.method ?? 'GET'
   try {
-    if (path === '/overview' && request.method === 'GET') return json(overview(state))
-
-    if (path === '/review' && request.method === 'GET') {
-      return json(reviewDetail(state, url.searchParams.get('id') || ''))
+    if (path === '/overview' && method === 'GET') {
+      writeJson(res, 200, overview(state))
+      return
     }
 
-    if (path === '/settings' && request.method === 'GET') {
+    if (path === '/review' && method === 'GET') {
+      writeJson(res, 200, reviewDetail(state, url.searchParams.get('id') || ''))
+      return
+    }
+
+    if (path === '/settings' && method === 'GET') {
       const stored = deps.loadSettings(state.dataDir)
       const chat = await deps.readCredential(deps.CHAT_KEY_REF)
       const rerank = await deps.readCredential(deps.RERANK_KEY_REF)
       const rules = await deps.readCredential(deps.RULES_TOKEN_REF)
-      return json({
+      writeJson(res, 200, {
         values: currentValues(stored),
         stored,
         secrets: { chat: Boolean(chat), rerank: Boolean(rerank), rules: Boolean(rules) },
@@ -278,40 +315,61 @@ export async function handleUiRequest(request, state, deps) {
           rerank: deps.RERANK_KEY_REF,
           rules: deps.RULES_TOKEN_REF,
         },
-        stack: { up: Boolean(state.mcpPort) },
+        stack: { up: Boolean(state.mcpPort), mcpPort: state.mcpPort },
       })
+      return
     }
 
-    if (path === '/server-info' && request.method === 'GET') {
+    if (path === '/server-info' && method === 'GET') {
       // 只回答"规则服务能不能连上"。嵌入模型、索引规模是服务端自身的事，
       // 客户端不读取也不展示。
       const stored = deps.loadSettings(state.dataDir)
       const base = (stored.rulesBaseUrl || process.env.TSR_REGISTRY_URL || '').replace(/\/+$/, '')
-      if (!base) return json({ reachable: false, reason: 'not-configured' })
+      if (!base) {
+        writeJson(res, 200, { reachable: false, reason: 'not-configured' })
+        return
+      }
       try {
         await getJsonFrom(base + '/health')
-        return json({ reachable: true })
+        writeJson(res, 200, { reachable: true })
       } catch (error) {
-        return json({ reachable: false, reason: String((error && error.message) || error) })
+        writeJson(res, 200, { reachable: false, reason: String((error && error.message) || error) })
       }
+      return
     }
 
-    if (path === '/settings' && request.method === 'POST') {
-      const body = await request.json()
+    if (path === '/settings' && method === 'POST') {
+      if (!isSameOrigin(req)) {
+        writeJson(res, 403, { error: 'cross-site request rejected' })
+        return
+      }
+      const body = await readJsonBody(req)
+      if (body === undefined) {
+        writeJson(res, 400, { error: 'malformed JSON body' })
+        return
+      }
       const patch = validateSettings((body && body.values) || body || {})
       const merged = { ...deps.loadSettings(state.dataDir), ...patch }
       mkdirSync(state.dataDir, { recursive: true })
       writeFileSync(join(state.dataDir, 'settings.json'), JSON.stringify(merged, null, 2), 'utf8')
-      return json({ ok: true, values: currentValues(merged) })
+      writeJson(res, 200, { ok: true, values: currentValues(merged) })
+      return
     }
 
-    if (path === '/restart' && request.method === 'POST') {
+    if (path === '/restart' && method === 'POST') {
+      if (!isSameOrigin(req)) {
+        writeJson(res, 403, { error: 'cross-site request rejected' })
+        return
+      }
+      // 请求体可以不传；有就消费掉，避免连接悬挂。
+      await readJsonBody(req)
       const ok = await deps.restart()
-      return json({ ok, stack: { up: Boolean(state.mcpPort), mcpPort: state.mcpPort } })
+      writeJson(res, 200, { ok, stack: { up: Boolean(state.mcpPort), mcpPort: state.mcpPort } })
+      return
     }
 
-    return json({ error: 'not found' }, 404)
+    writeJson(res, 404, { error: 'not found' })
   } catch (error) {
-    return json({ error: String((error && error.message) || error) }, 400)
+    writeJson(res, 400, { error: String((error && error.message) || error) })
   }
 }

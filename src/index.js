@@ -287,7 +287,7 @@ export function apply(ctx, config = {}) {
     scope.effect(() => scope.webServer.register({
       kind: 'prefix',
       path: UI_PREFIX,
-      handler: (request) => handleUiRequest(request, state, {
+      handler: (request, response) => handleUiRequest(request, response, state, {
         loadSettings, settingsToEnv, readCredential,
         CHAT_KEY_REF, RERANK_KEY_REF, RULES_TOKEN_REF,
         // 重启不阻塞响应：栈起得慢（首次 initdb 可达一分钟），

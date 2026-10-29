@@ -65,14 +65,49 @@ const deps = {
   restart: async () => true,
 }
 
-// 前缀不含尾斜杠（宿主按 prefix + '/' 匹配），所以这里显式补一个。
-const url = (path) => `http://x${UI_PREFIX}${path.startsWith('/') ? path : '/' + path}`
-const get = (path) => handleUiRequest(new Request(url(path)), state, deps)
-const post = (path, body) => handleUiRequest(
-  new Request(url(path), {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
-  }), state, deps,
-)
+// 宿主把 Node 原生 req/res 交给 handler，这里按同样语义造一对假对象。
+function makeReq({ path, method = 'GET', body, headers = {} }) {
+  const payload = body === undefined ? '' : JSON.stringify(body)
+  const req = {
+    url: `${UI_PREFIX}${path.startsWith('/') ? path : '/' + path}`,
+    method,
+    headers: { host: '127.0.0.1:57511', ...headers },
+  }
+  req[Symbol.asyncIterator] = async function* () {
+    if (payload) yield Buffer.from(payload)
+  }
+  return req
+}
+
+function makeRes() {
+  const res = { statusCode: 0, headers: {}, text: '' }
+  res.writeHead = (status, headers) => {
+    res.statusCode = status
+    Object.assign(res.headers, headers || {})
+  }
+  res.end = (chunk) => {
+    if (chunk !== undefined) {
+      res.text += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8')
+    }
+  }
+  return res
+}
+
+async function call(path, method = 'GET', body, headers) {
+  const res = makeRes()
+  await handleUiRequest(makeReq({ path, method, body, headers }), res, state, deps)
+  let parsed
+  try {
+    parsed = JSON.parse(res.text)
+  } catch {
+    parsed = undefined
+  }
+  return { status: res.statusCode, body: parsed, text: res.text }
+}
+
+const get = (path) => call(path).then((r) => ({ status: r.status, json: async () => r.body }))
+const post = (path, body, headers) =>
+  call(path, 'POST', body, headers).then((r) => ({ status: r.status, json: async () => r.body }))
 
 // overview
 const ov = await (await get('overview')).json()
