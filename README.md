@@ -63,12 +63,14 @@ plugin_manager(action="install_bundle", target="D:\\...\\dsh-tech-spec-review-<v
 ## 审查一本规范书
 
 ```text
-1) 上传 DOCX：POST http://127.0.0.1:8775/upload_review_document（Bearer，multipart）
-2) mcp__technical-spec-review__start_review(file_id, object_scope?, document_role?)
-3) mcp__technical-spec-review__get_review_status(review_id)
-4) mcp__technical-spec-review__get_review_results(review_id)
-5) 失败重试 mcp__technical-spec-review__retry_review(review_id)
+1) mcp__technical-spec-review__start_review(document_path, object_scope?, document_role?)
+2) mcp__technical-spec-review__get_review_status(review_id)
+3) mcp__technical-spec-review__get_review_results(review_id)
+4) 失败重试 mcp__technical-spec-review__retry_review(review_id)
 ```
+
+`document_path` 是本机 DOCX 路径（绝对路径，或相对 `TSR_DOCUMENT_ROOT`）；文件只在本机
+读取并快照进该次审查目录，不上传、不出本机。命令行等价入口：`ts-review run <路径>`。
 
 引擎对模型依从/传输类错误自动重试一次；单章失败不阻断其他章节，汇总阶段会被
 `DEPENDENCY_FAILED` 挡住并如实标失败。
@@ -77,6 +79,22 @@ plugin_manager(action="install_bundle", target="D:\\...\\dsh-tech-spec-review-<v
 
 安装本插件同时注册预设「技术规范书审查专家」：限定审查流程、区分确定性结论与需人工
 确认的候选、要求每条问题给出章节与原文依据。
+
+## 自检
+
+改完先跑这三项，缺模型或规则服务时 e2e 会自己跳过：
+
+```text
+python tests\e2e_review.py            # 生成小样本 → 跑完整审查 → 校验产物与报告文本
+node   tests\preset-config.smoke.mjs  # 预设每个子插件的 config 是否满足必填项
+node   tests\ui-routes-smoke.mjs      # 状态页聚合与任务名映射
+```
+
+已有一次真实审查的产物时，还可以只重渲染报告，快速检查交付文本：
+
+```text
+python tests\report_render_smoke.py <run目录> [输出目录]
+```
 
 ## 已知边界
 

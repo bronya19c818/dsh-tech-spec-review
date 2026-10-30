@@ -39,12 +39,12 @@ T1 用 Cloudflare Clef（`@cf/cloudflare/clef`，27B）。**不能用 `clef-flas
 T0 保留的原因：Clef 对半角标点、重复标点不敏感（实测 0.26 分，低于阈值），
 这两类正则能确定性判断，正好互补。
 
-设置页「B02 筛选模型」填 Cloudflare 的账户地址与 API Key；留空则走纯 LLM 路径。
+设置页「文字筛选模型」填 Cloudflare 的账户地址与 API Key；留空则走纯 LLM 路径。
 
 
 
 客户端**不需要** PostgreSQL、pgvector、嵌入模型。依赖只有：`python-docx`、`httpx`、
-`pydantic`、`mcp`、`python-multipart`、`uvicorn`、`python-dotenv`。
+`pydantic`、`mcp`、`uvicorn`、`python-dotenv`。
 
 规则库与索引在服务端（见 rule-server 仓库）。客户端要连不上规则服务时，先确认
 `规则服务 → 服务地址` 配置正确、服务端 `status.bat` 正常。

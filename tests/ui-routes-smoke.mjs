@@ -128,6 +128,16 @@ assert.equal(detail.chapters[1].status, 'FAILED')
 assert.equal(detail.chapters[1].queries, 2)
 assert.equal(detail.groups.length, 2)
 assert.deepEqual(detail.basics.map((b) => b.id), ['B01', 'B02', 'B03', 'B04'])
+// 任务地图给的是中文名，B0x 只作内部键
+assert.deepEqual(
+  detail.basics.map((b) => b.label),
+  ['版面与格式', '文字与表达', '章节结构', '章节引用'],
+  'basics 必须下发中文 label',
+)
+assert.ok(
+  detail.basics.every((b) => !/B0\d/.test(b.label)),
+  'label 里不应出现 B0x 代号',
+)
 
 // 非法 id 必须被拒
 assert.equal((await get('review?id=../etc')).status, 400, '非法 review id 应 400')

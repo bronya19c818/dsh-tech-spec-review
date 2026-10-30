@@ -299,7 +299,12 @@ window.__ModuleLoader__.load({
       const runningChapters = chapters.filter((c) => c.status === 'RUNNING').length
       const failedChapters = chapters.filter((c) => c.status === 'FAILED').length
       const issueCount = cur?.issues ?? (detail?.groups || []).reduce((n, g) => n + (g.issue_ids?.length || 0), 0)
-      const basics = detail?.basics || ['B01', 'B02', 'B03', 'B04'].map((id) => ({ id, status: 'PENDING', progress: [0, 1] }))
+      // 真实任务名由 ui-routes 下发（那里是唯一映射表）；这里只是数据到达前的占位。
+      const basics = detail?.basics || ['B01', 'B02', 'B03', 'B04'].map((id) => ({
+        id,
+        status: 'PENDING',
+        progress: [0, 1],
+      }))
 
       const tiles = [
         { label: '整体状态', value: cur ? (STATUS[cur.status] || STATUS.UNKNOWN).label : '—', note: cur ? `用时 ${elapsed(cur.createdAt, cur.status === 'RUNNING' ? null : cur.updatedAt)}` : '' },
@@ -334,9 +339,9 @@ window.__ModuleLoader__.load({
           reviews.length === 0
             ? h('div', { className: 'tsr-empty' },
               h('strong', null, '还没有审查任务'),
-              '在会话里让 Agent 上传技术规范书并调用 ',
+              '在会话里把技术规范书的文件路径交给 Agent，由它调用 ',
               h('code', { className: 'tsr-kbd' }, 'start_review'),
-              '，进度会实时出现在这里。',
+              ' 启动审查，进度会实时出现在这里。',
             )
             : h('div', { className: 'tsr-cols' },
               h('div', { className: 'tsr-list' },
@@ -365,14 +370,14 @@ window.__ModuleLoader__.load({
                   h('div', { className: 'tsr-card-b' },
                     h('div', { style: { marginBottom: 4 } },
                       basics.map((b) => h(Lane, {
-                        key: b.id, id: b.id, label: b.id,
+                        key: b.id, id: b.id, label: b.label || b.id,
                         status: b.status,
                         done: Array.isArray(b.progress) ? b.progress[0] : 0,
                         total: Array.isArray(b.progress) ? b.progress[1] : 1,
                       })),
                       chapters.length
                         ? h(Lane, {
-                          id: 'B05', label: 'B05 章节',
+                          id: 'B05', label: '章节内容',
                           status: failedChapters > 0 ? 'FAILED' : doneChapters === chapters.length ? 'COMPLETED' : runningChapters > 0 ? 'RUNNING' : 'PENDING',
                           done: doneChapters, total: chapters.length,
                         })
@@ -421,8 +426,8 @@ window.__ModuleLoader__.load({
       },
       {
         id: 'gate',
-        title: 'B02 筛选模型',
-        hint: '可选。对句子先做一次打分，超过阈值的句子才交给对话模型；不配置则全部句子直接送对话模型。',
+        title: '文字筛选模型',
+        hint: '可选。先对每个句子打分，超过阈值的句子才交给对话模型；不配置则全部句子直接送对话模型。',
         fields: [
           { key: 'gateBaseUrl', label: '接口地址', placeholder: 'https://api.cloudflare.com/client/v4/accounts/<ID>/ai/run/@cf/cloudflare/clef' },
           { key: 'gateThreshold', label: '筛选阈值', type: 'number', placeholder: '0.5', width: 'half' },

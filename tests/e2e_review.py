@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -26,6 +27,14 @@ ROOT = Path(__file__).resolve().parents[1]
 ARTIFACTS = ROOT / "artifacts"
 
 sys.path.insert(0, str(ROOT / "py"))
+sys.path.insert(0, str(ROOT / "tests"))
+
+try:
+    from report_render_smoke import check_report_text  # noqa: E402
+except ImportError:  # 报告体检脚本没跟着提交时，记为一步失败，不连累其余检查
+
+    def check_report_text(text: str) -> list[str]:
+        return ["缺少 tests/report_render_smoke.py，无法校验报告文本"]
 
 # 小样本：一个一级章 + 两个二级章，故意混入样式不一致与编号跳号
 CHAPTERS = [
@@ -205,6 +214,30 @@ def main(argv: list[str]) -> int:
                 {"md": report_md.stat().st_size if report_md.exists() else 0,
                  "docx": report_docx.stat().st_size if report_docx.exists() else 0},
             )
+
+            # 本地审查契约：文档快照进审查目录，状态里不再有上传期的 file_id
+            snapshot = run_dir / "source.docx"
+            snapshot_ok = (
+                snapshot.exists()
+                and hashlib.sha256(snapshot.read_bytes()).hexdigest() == state.get("source_hash")
+            )
+            record(
+                "源文档已快照",
+                snapshot_ok,
+                {"snapshot": str(snapshot.name), "source": state.get("source")},
+            )
+            legacy_fields = [name for name in ("file_id", "file_expires_at") if name in state]
+            record("状态无上传字段", not legacy_fields, {"leftover": legacy_fields})
+            record(
+                "记录原始路径",
+                bool(state.get("source_path")),
+                {"source_path": state.get("source_path")},
+            )
+
+            # 交付文本体检：内部编号、残句、计数行、人工确认条目上限
+            report_text = report_md.read_text(encoding="utf-8") if report_md.exists() else ""
+            text_problems = check_report_text(report_text)
+            record("报告文本可读", not text_problems, text_problems[:5])
 
             summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
             groups = summary.get("groups") or []

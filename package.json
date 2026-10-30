@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "技术规范书审查：本地嵌入式 PostgreSQL/pgvector 规则库 + 程序化审查引擎，按需拉起并动态挂载为 MCP 工具",
+  "description": "技术规范书审查：服务端规则库 + 客户端本地审查引擎，按需拉起并动态挂载为 MCP 工具",
   "keywords": [
     "dsh",
     "dsh-bundle",
@@ -31,6 +31,7 @@
   "files": [
     "src/index.js",
     "src/client.js",
+    "src/task-labels.js",
     "cordis.patch.yml",
     "py/technical_spec_review/*.py",
     "py/technical_spec_review/legacy_compilers/*.py",

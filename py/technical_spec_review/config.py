@@ -8,7 +8,6 @@ from pathlib import Path
 import httpx
 
 from .engine import ReviewService
-from .ingress import UploadStore
 from .model import OpenAIModel
 from .rules import RegistryClient
 
@@ -69,10 +68,6 @@ class Config:
     mcp_endpoint_host_override: str = ""
     mcp_host: str = "127.0.0.1"
     mcp_port: int = 8775
-    upload_api_token: str = ""
-    upload_max_bytes: int = 50 * 1024 * 1024
-    upload_ttl_seconds: int = 3600
-    upload_trust_proxy: bool = False
 
     @classmethod
     def from_env(cls) -> Config:
@@ -84,11 +79,6 @@ class Config:
             mcp_endpoint_host_override=os.getenv("TSR_MCP_ENDPOINT_HOST_OVERRIDE", ""),
             mcp_host=os.getenv("TSR_MCP_HOST", "127.0.0.1"),
             mcp_port=int(os.getenv("TSR_MCP_PORT", "8775")),
-            upload_api_token=os.getenv("TSR_UPLOAD_API_TOKEN", ""),
-            upload_max_bytes=int(os.getenv("TSR_UPLOAD_MAX_BYTES", str(50 * 1024 * 1024))),
-            upload_ttl_seconds=int(os.getenv("TSR_UPLOAD_TTL_SECONDS", "3600")),
-            upload_trust_proxy=os.getenv("TSR_UPLOAD_TRUST_PROXY", "false").lower()
-            in {"1", "true", "yes", "on"},
             runs_dir=Path(os.getenv("TSR_RUNS_DIR", "runs")),
             document_root=Path(os.getenv("TSR_DOCUMENT_ROOT", ".")),
             model_url=os.getenv("TSR_MODEL_BASE_URL", ""),
@@ -120,14 +110,11 @@ async def runtime(
     config: Config,
     *,
     connect_rules: bool = True,
-    upload_store: UploadStore | None = None,
 ):
     if config.rules_backend not in {"http", "mcp"}:
         raise ValueError("RULES_BACKEND_INVALID")
     async with AsyncExitStack() as stack:
-        async with _runtime(
-            config, stack, connect_rules=connect_rules, upload_store=upload_store
-        ) as service:
+        async with _runtime(config, stack, connect_rules=connect_rules) as service:
             yield service
 
 
@@ -137,7 +124,6 @@ async def _runtime(
     stack,
     *,
     connect_rules: bool,
-    upload_store: UploadStore | None = None,
 ):
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(120, connect=10),
@@ -206,13 +192,6 @@ async def _runtime(
             config.model_name,
             concurrency=max(config.concurrency, config.b02_concurrency),
         )
-        if upload_store is None:
-            upload_store = UploadStore(
-                config.document_root,
-                max_bytes=config.upload_max_bytes,
-                ttl_seconds=config.upload_ttl_seconds,
-                runs_dir=config.runs_dir,
-            )
         service = ReviewService(
             config.runs_dir,
             config.document_root,
@@ -223,7 +202,6 @@ async def _runtime(
             b02_batch=config.b02_batch,
             gate=gate,
             gate_threshold=config.gate_threshold,
-            upload_store=upload_store,
         )
         try:
             yield service

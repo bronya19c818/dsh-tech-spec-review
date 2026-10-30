@@ -10,6 +10,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { request as httpRequest } from 'node:http'
 import { join } from 'node:path'
 
+import { TASK_LABELS } from './task-labels.js'
+
 // 前缀不带尾斜杠：宿主按 pathname === prefix 或 startsWith(prefix + '/') 匹配。
 export const UI_PREFIX = '/api/technical-spec-review'
 
@@ -179,6 +181,7 @@ function reviewDetail(state, id) {
     const result = readJson(join(dir, `${taskId}.json`)) || {}
     return {
       id: taskId,
+      label: TASK_LABELS[taskId] || taskId,
       status: task.status || 'PENDING',
       error: task.error || '',
       findings: (result.findings || []).length,

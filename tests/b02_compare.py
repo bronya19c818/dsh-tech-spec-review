@@ -14,20 +14,19 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "py"))
 sys.path.insert(0, str(ROOT / "tests"))
 
-import importlib.util
+import importlib.util  # noqa: E402 - 必须先插入 sys.path 再导入被测包
 
 spec = importlib.util.spec_from_file_location("e2e", ROOT / "tests" / "e2e_review.py")
 e2e = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(e2e)
 e2e.load_env()
 
+import httpx  # noqa: E402
 from technical_spec_review.config import Config  # noqa: E402
 from technical_spec_review.gate import ClefGate  # noqa: E402
 from technical_spec_review.language import review_language  # noqa: E402
 from technical_spec_review.model import OpenAIModel  # noqa: E402
 from technical_spec_review.parser import parse_docx  # noqa: E402
-
-import httpx  # noqa: E402
 
 
 async def main() -> int:

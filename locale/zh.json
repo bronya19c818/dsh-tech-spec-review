@@ -1,6 +1,1 @@
-{
-  "bundle": {
-    "name": "技术规范书审查",
-    "description": "本地 PostgreSQL/pgvector 规则库 + 结构化审查引擎，通过 MCP 暴露审查与规则工具"
-  }
-}
+{"bundle":{"name":"技术规范书审查","description":"服务端规则库 + 客户端本地审查引擎，通过 MCP 暴露审查与规则工具"}}

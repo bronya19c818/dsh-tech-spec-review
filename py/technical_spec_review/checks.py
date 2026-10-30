@@ -301,8 +301,7 @@ def check_layout(document: DocumentEvidence, object_scope: str, rules: list[Rule
             ]
             suggestion = f"请核对并统一以下正文段落的样式，优先采用“{primary_body_style}”样式。"
         detail_lines.extend(
-            f"{index}. 段落 {block.paragraph_index if block.paragraph_index is not None else block.id}"
-            f"（{block.id}），实际样式“{block.style_name or '（未指定）'}”："
+            f"{index}. 实际样式“{block.style_name or '（未指定）'}”："
             f"{(block.source_text or block.text).strip()}"
             for index, block in enumerate(mixed_body_blocks, 1)
         )

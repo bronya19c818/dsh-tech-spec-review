@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 import uuid
 from contextlib import suppress
@@ -19,7 +20,7 @@ from .artifacts import (
 )
 from .chapter import review_chapter
 from .checks import check_layout, check_numbering_sequence, check_references, check_structure
-from .ingress import UploadedDocument, UploadStore
+from .ingress import snapshot_source
 from .language import review_language
 from .models import DocumentEvidence, ReviewContext, Rule, TaskResult
 from .parser import parse_docx
@@ -40,7 +41,6 @@ class ReviewService:
         b02_batch: int = 8,
         gate=None,
         gate_threshold: float = 0.5,
-        upload_store: UploadStore | None = None,
     ):
         sentence_concurrency = concurrency if b02_concurrency is None else b02_concurrency
         if not 1 <= concurrency <= 32 or not 1 <= sentence_concurrency <= 32:
@@ -53,7 +53,6 @@ class ReviewService:
         self.b02_batch = b02_batch
         self.gate = gate
         self.gate_threshold = gate_threshold
-        self.upload_store = upload_store
         self.active: dict[str, asyncio.Task] = {}
         self.locks: dict[str, asyncio.Lock] = {}
 
@@ -66,15 +65,50 @@ class ReviewService:
         return path
 
     def document_path(self, source: str) -> Path:
+        """把传入的路径解析成本机可读的 DOCX 绝对路径。
+
+        审查在客户端本地跑，用户给的一般就是绝对路径，所以绝对路径不受文档根
+        目录限制；相对路径按 TSR_DOCUMENT_ROOT 解析，且不许用 ../ 逃出去。
+        """
         path = Path(source).expanduser()
-        if not path.is_absolute():
-            path = self.document_root / path
-        path = path.resolve()
-        if not path.is_relative_to(self.document_root):
-            raise ValueError("DOCUMENT_OUTSIDE_ROOT")
+        if path.is_absolute():
+            path = path.resolve()
+        else:
+            path = (self.document_root / path).resolve()
+            if not path.is_relative_to(self.document_root):
+                raise ValueError("DOCUMENT_OUTSIDE_ROOT")
         if path.suffix.lower() != ".docx" or not path.is_file():
             raise ValueError("DOCX_FILE_REQUIRED")
         return path
+
+    async def _validated_snapshot(self, state: dict) -> Path:
+        """确定这次审查要读的文档，并确认它与启动时不是同一份被改过的文件。
+
+        审查只读快照（source.docx），所以过程可复现；但如果原始路径还在、内容
+        已经变了，说明用户改过源文件，继续沿用旧结果没有意义，必须新建审查。
+        """
+        source = state.get("source")
+        if not source:
+            raise ValueError("LEGACY_REVIEW_WITHOUT_SOURCE")
+        snapshot = Path(source)
+        if not await asyncio.to_thread(snapshot.is_file):
+            raise ValueError("SOURCE_FILE_MISSING")
+        expected = state.get("source_hash")
+        if not expected:
+            return snapshot
+        original = state.get("source_path")
+        candidates = [snapshot]
+        if original and Path(original) != snapshot:
+            candidates.append(Path(original))
+        for candidate in candidates:
+            if not await asyncio.to_thread(candidate.is_file):
+                continue
+            actual = await asyncio.to_thread(
+                lambda item=candidate: hashlib.sha256(item.read_bytes()).hexdigest()
+            )
+            if actual != expected:
+                raise ValueError("SOURCE_CHANGED_START_NEW_REVIEW")
+        return snapshot
 
     async def _update(self, rid: str, task_id: str | None = None, **values):
         async with self.locks.setdefault(rid, asyncio.Lock()):
@@ -88,29 +122,25 @@ class ReviewService:
 
     async def start(
         self,
-        file_id: str,
+        source: str | Path,
         object_scope: str | None = None,
         document_role: str = "采购技术规范书",
     ) -> str:
-        if self.upload_store is None:
-            raise ValueError("UPLOAD_STORAGE_UNAVAILABLE")
-        uploaded = await asyncio.to_thread(self.upload_store.get, file_id)
-        await self.cleanup_uploads({file_id})
-        # Keep the metadata long enough to report FILE_EXPIRED rather than
-        # turning a race with cleanup into FILE_NOT_FOUND.
-        uploaded = await asyncio.to_thread(self.upload_store.get, file_id)
+        """按本地 DOCX 路径启动一次审查，并把文档快照进本次审查目录。"""
+        path = await asyncio.to_thread(self.document_path, str(source))
         rid = uuid.uuid4().hex
         directory = self.directory(rid)
+        directory.mkdir(parents=True, exist_ok=True)
         lease = await asyncio.to_thread(Lease, directory / ".lease")
         try:
+            snapshot = await asyncio.to_thread(snapshot_source, path, directory / "source.docx")
             state = {
                 "review_id": rid,
                 "status": "PENDING",
-                "file_id": uploaded.file_id,
-                "source": uploaded.stored_path,
-                "source_name": uploaded.filename,
-                "source_hash": uploaded.sha256,
-                "file_expires_at": uploaded.expires_at,
+                "source": str(snapshot.path),
+                "source_path": str(path),
+                "source_name": snapshot.filename,
+                "source_hash": snapshot.sha256,
                 "requested_object": object_scope,
                 "document_role": document_role,
                 "created_at": now(),
@@ -124,19 +154,6 @@ class ReviewService:
             lease.close()
             raise
         return rid
-
-    async def upload_local(self, source: str | Path) -> UploadedDocument:
-        if self.upload_store is None:
-            raise ValueError("UPLOAD_STORAGE_UNAVAILABLE")
-        path = await asyncio.to_thread(self.document_path, str(source))
-        return await asyncio.to_thread(self.upload_store.upload_path, path)
-
-    async def cleanup_uploads(self, preserve_file_ids: set[str] | None = None) -> int:
-        if self.upload_store is None:
-            return 0
-        return await asyncio.to_thread(
-            self.upload_store.cleanup_expired, set(preserve_file_ids or set()), runs_dir=self.runs
-        )
 
     async def wait(self, rid: str):
         if rid in self.active:
@@ -186,17 +203,7 @@ class ReviewService:
             state = await read_json(directory / "state.json")
             if state["status"] == "COMPLETED":
                 raise ValueError("REVIEW_ALREADY_COMPLETED")
-            file_id = state.get("file_id")
-            if not file_id:
-                raise ValueError("LEGACY_REVIEW_NO_FILE_ID")
-            if self.upload_store is None:
-                raise ValueError("UPLOAD_STORAGE_UNAVAILABLE")
-            try:
-                await asyncio.to_thread(self.upload_store.get, file_id)
-            except ValueError as exc:
-                if str(exc) == "FILE_HASH_MISMATCH":
-                    raise ValueError("SOURCE_CHANGED_START_NEW_REVIEW") from None
-                raise
+            await self._validated_snapshot(state)
             for task_id, task in state["tasks"].items():
                 if task["status"] != "COMPLETED":
                     await self._update(rid, task_id, status="PENDING", error=None)
@@ -234,12 +241,7 @@ class ReviewService:
                 ReviewContext.model_validate(await read_json(directory / "context.json")),
             )
         await self._update(rid, "INIT", status="RUNNING")
-        if self.upload_store is None:
-            raise ValueError("UPLOAD_STORAGE_UNAVAILABLE")
-        uploaded = await asyncio.to_thread(self.upload_store.get, state.get("file_id", ""))
-        path = uploaded.path
-        if state.get("source_hash") and state["source_hash"] != uploaded.sha256:
-            raise ValueError("SOURCE_CHANGED_START_NEW_REVIEW")
+        path = await self._validated_snapshot(state)
         document = await asyncio.to_thread(parse_docx, path)
         if not document.blocks:
             raise ValueError("EMPTY_DOCUMENT")
@@ -511,6 +513,8 @@ class ReviewService:
             "CANDIDATE_APPLICABILITY_INVALID",
             "MODEL_DECISIONS_INVALID",
             "CHAPTER_RESPONSE_INVALID",
+            # 模型发起工具调用时参数不合规（字段缺失、类型不对），重问一次通常能过。
+            "MODEL_TOOL_ARGUMENTS_INVALID",
         }:
             return True
         if error.startswith("MODEL_HTTP_"):

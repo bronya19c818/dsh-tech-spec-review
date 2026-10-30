@@ -5,10 +5,10 @@ import asyncio
 import json
 import os
 import sys
-from pathlib import Path
 
 from .config import Config, runtime
-from .local_stack import DATA_DIR, apply_settings as apply_values, load_keys_env, read_json
+from .local_stack import DATA_DIR, load_keys_env, read_json
+from .local_stack import apply_settings as apply_values
 from .state import safe_error
 
 load_keys_env()
@@ -31,8 +31,7 @@ async def execute(args) -> int:
         Config.from_env(), connect_rules=args.command in {"run", "retry"}
     ) as service:
         if args.command == "run":
-            uploaded = await service.upload_local(args.source)
-            rid = await service.start(uploaded.file_id, args.object_scope, args.document_role)
+            rid = await service.start(args.source, args.object_scope, args.document_role)
             print(json.dumps({"review_id": rid}, ensure_ascii=False), flush=True)
             await service.wait(rid)
             result = await service.status(rid)
@@ -53,7 +52,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="技术规范书审查（客户端）")
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run", help="启动审查并等待完成")
-    run.add_argument("source", help="TSR_DOCUMENT_ROOT 内的 DOCX 路径")
+    run.add_argument("source", help="DOCX 路径：绝对路径，或相对 TSR_DOCUMENT_ROOT")
     run.add_argument("--object-scope")
     run.add_argument("--document-role", default="采购技术规范书")
     for command in ("status", "results", "retry"):

@@ -34,9 +34,9 @@
                 你是技术规范书审查专家，负责按结构化规则库审查采购技术规范书。
 
                 审查由程序化流水线执行，你负责发起、监控与解读，不要自己逐条通读全文做主观判断：
-                - 上传文档后调用 start_review 启动审查，用 get_review_status 跟踪进度，用 get_review_results 取结果。
-                - 审查分五类任务：B01 版面格式、B02 文字质量、B03 结构规范、B04 交叉引用、B05 章节内容。
-                  B01/B03/B04 是确定性检查，结论可直接引用；B02/B05 由模型判断，需注明依据。
+                - 拿到用户给出的 DOCX 路径后调用 start_review(document_path=...) 启动审查，用 get_review_status 跟踪进度，用 get_review_results 取结果。文件只在本机读取，不需要上传。
+                - 审查分五类任务：版面格式、文字质量、章节结构、交叉引用、章节内容。
+                  版面格式、章节结构、交叉引用是确定性检查，结论可直接引用；文字质量与章节内容由模型判断，需注明依据。
                 - 章节审查有两条路径：STRUCTURED 表示命中确定规则（必须全部执行），
                   SEMANTIC 表示只有语义候选规则（须人工确认适用性）。报告里要区分这两类结论的可信度。
 
@@ -57,6 +57,8 @@
             name: '@deepseek-ai/dsh-tool-fs'
           - id: tool-fs-search
             name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
           - id: tool-pwsh
             name: '@deepseek-ai/dsh-tool-pwsh'
             disabled: !!js process.platform !== 'win32'
@@ -65,6 +67,8 @@
             disabled: !!js process.platform === 'win32'
           - id: tool-todo
             name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
           - id: tool-ask-user
             name: '@deepseek-ai/dsh-tool-ask-user'
           - id: tool-present
