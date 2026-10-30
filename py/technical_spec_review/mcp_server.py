@@ -51,11 +51,16 @@ def create_server(config: Config | None = None) -> FastMCP:
         lifespan=lifespan,
         host=settings.mcp_host,
         port=settings.mcp_port,
+        # 无状态：每次请求独立处理，不保存会话。原来的会话状态让服务重启后
+        # 客户端攥着旧 session id 一直收到 "Session not found"，而 HTTP 建连之后
+        # 的请求级失败不归客户端的重连监督器管，只能重启整个 Host。这里的工具
+        # 都是请求/应答式，不需要会话，因此直接不要会话。
+        stateless_http=True,
+        json_response=True,
     )
 
-    # FastMCP's MCP lifespan runs once per Streamable HTTP session. Wrap the
-    # Starlette application lifespan so the runtime and its HTTP clients live
-    # for the server process, outlasting individual client sessions.
+    # 无状态模式下每个请求都会起一份新的传输，MCP 的 lifespan 因此按请求执行。
+    # 包一层 Starlette 应用 lifespan，让运行时和它的 HTTP 客户端活满整个进程。
     streamable_http_app = server.streamable_http_app
 
     def process_scoped_streamable_http_app():

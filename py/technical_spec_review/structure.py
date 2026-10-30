@@ -254,16 +254,54 @@ def check_template_structure(
             assignments[i] = candidates[0]
             used.add(candidates[0])
 
-    def finding(code, detail, c=None, n=None):
+    def finding(code, detail, c=None, n=None, evidence=None, target=None):
+        ids = evidence if evidence is not None else (c.evidence_ids[:1] if c else [])
+        if target is None:
+            target = f"{n.part}/{n.section_number}" if n else (f"{c.part}/{c.number}" if c else "")
         result.findings.append(
             Finding(
                 code=code,
                 detail=detail,
                 rule_id=rule.rule_id,
                 binding="DETERMINISTIC",
-                target=f"{n.part}/{n.section_number}" if n else f"{c.part}/{c.number}",
-                evidence_ids=c.evidence_ids[:1] if c else [],
+                target=target,
+                evidence_ids=ids,
             )
+        )
+
+    # 结构问题按类别汇总。逐个一级章各报一条时，一份简版框架的文档能刷出二十
+    # 多条同类结论，读者拿到的是清单长度而非信息；合成一条并列出章节，结论不变。
+    unexpected_primary = [
+        c for i, c in enumerate(actual) if i not in assignments and "." not in c.number
+    ]
+    missing_primary = [n for j, n in enumerate(tree) if j not in used and n.level == 1]
+    matched_primary = sum(
+        1 for i, c in enumerate(actual) if "." not in c.number and i in assignments
+    )
+    if unexpected_primary:
+        listing = "；".join(f"{c.number} {c.title}" for c in unexpected_primary)
+        detail = f"文档有 {len(unexpected_primary)} 个一级章不在标准树内：{listing}。"
+        # 缺章数量远超对上号的数量时，说明这份文档用的不是这套框架，
+        # 与其让读者逐条比对，不如提示先确认模板。
+        if matched_primary == 0 or len(missing_primary) >= 3 * matched_primary:
+            detail += (
+                "文档的一级章框架与标准树基本不同；若本项目使用简版模板，"
+                "请以项目模板为准，并确认这些章节与下列缺项是否需要按标准树调整。"
+            )
+        finding(
+            "STRUCTURE_CHAPTER_UNEXPECTED",
+            detail,
+            evidence=[c.evidence_ids[0] for c in unexpected_primary if c.evidence_ids],
+            target="一级章集合",
+        )
+    if missing_primary:
+        listing = "；".join(
+            f"{n.part} {n.section_number} {n.section_title}" for n in missing_primary
+        )
+        finding(
+            "STRUCTURE_CHAPTER_MISSING",
+            f"标准树要求的一级章缺少 {len(missing_primary)} 个：{listing}。",
+            target="一级章集合",
         )
 
     last_ranks: dict[tuple[str, str | None], int] = {}
@@ -280,11 +318,7 @@ def check_template_structure(
         before = len(result.findings)
         if n is None:
             if parent is None:
-                finding(
-                    "STRUCTURE_CHAPTER_UNEXPECTED",
-                    f"出现标准树外的一级章：{c.part} {c.number} {c.title}。",
-                    c,
-                )
+                # 已在循环前按类别汇总成一条，这里只记录映射状态。
                 status, reasons = "MISMATCH", ["未找到标准一级章节身份"]
             else:
                 status, confidence, reasons = (
@@ -382,13 +416,8 @@ def check_template_structure(
     for j, n in enumerate(tree):
         if j in used:
             continue
-        if n.level == 1:
-            finding(
-                "STRUCTURE_CHAPTER_MISSING",
-                f"缺少标准一级章节：{n.part} {n.section_number} {n.section_title}。",
-                n=n,
-            )
-        else:
+        if n.level != 1:
+            # 一级章缺失已在循环前汇总成一条；二级章仍逐条进"需复核"清单。
             result.gaps.append(
                 f"{n.part}/{n.section_number} {n.section_title} 未找到可靠对应，需内容映射复核。"
             )
@@ -413,5 +442,8 @@ def check_template_structure(
         expected_chapters=len(tree),
         matched=sum(m["mapping_status"] == "MATCHED" for m in result.chapter_mappings),
         needs_review=sum(m["mapping_status"] == "NEEDS_REVIEW" for m in result.chapter_mappings),
+        unexpected_primary=len(unexpected_primary),
+        missing_primary=len(missing_primary),
+        matched_primary=matched_primary,
     )
     return result.assign_ids()

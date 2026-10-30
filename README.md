@@ -85,9 +85,10 @@ plugin_manager(action="install_bundle", target="D:\\...\\dsh-tech-spec-review-<v
 改完先跑这三项，缺模型或规则服务时 e2e 会自己跳过：
 
 ```text
-python tests\e2e_review.py            # 生成小样本 → 跑完整审查 → 校验产物与报告文本
-node   tests\preset-config.smoke.mjs  # 预设每个子插件的 config 是否满足必填项
-node   tests\ui-routes-smoke.mjs      # 状态页聚合与任务名映射
+python tests\e2e_review.py              # 生成小样本 → 跑完整审查 → 校验产物与报告文本
+python tests\structure_summary_smoke.py # 结构检查汇总：简版框架收敛、标准框架不误报
+node   tests\preset-config.smoke.mjs    # 预设每个子插件的 config 是否满足必填项
+node   tests\ui-routes-smoke.mjs        # 状态页聚合与任务名映射
 ```
 
 已有一次真实审查的产物时，还可以只重渲染报告，快速检查交付文本：
@@ -99,7 +100,7 @@ python tests\report_render_smoke.py <run目录> [输出目录]
 ## 已知边界
 
 - 本机若配置了全局代理，插件内部所有回环请求都强制 `trust_env=False`。
-- 本地 MCP 服务重启后，DSH 侧会话会失效（`Session not found`），在插件面板关再开即可。
+- 本地 MCP 服务以无状态模式提供工具：服务重启不再让 DSH 侧的工具失效，不必重启 Harness。
 - 只做「文件是否写明要求」的审查，不判断产品是否履约或验收合格。
 
 开发与目录说明见 [`docs/deployment.md`](docs/deployment.md)。
